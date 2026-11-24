@@ -25,7 +25,8 @@ jobs:
 
       - name: PaintCore's revision
         id: core
-        run: echo "rev=$(sed -n 's/.*revision: "\([0-9a-f]*\)".*/\1/p' core/Package.swift)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "rev=$(sed -n 's/.*revision: "\([0-9a-f]*\)".*/\1/p' core/Package.swift)" >> "$GITHUB_OUTPUT"
 
       # PaintCore from its own checkout (MOONLIGHT_PAINTCORE_PATH), at the pinned revision: the
       # same code SwiftPM would fetch, and its corpus photos for the probe.
