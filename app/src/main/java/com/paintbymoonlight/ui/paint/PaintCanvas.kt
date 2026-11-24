@@ -48,6 +48,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntSize
+import com.paintbymoonlight.core.Edge
 import com.paintbymoonlight.ui.theme.Moonlight
 import kotlin.math.abs
 import kotlin.math.cos
@@ -87,7 +88,10 @@ class CanvasMotion {
         fun since(frame: Long) = (start?.let { (frame - it) / 1e9f } ?: 0f) - delay
     }
 
-    internal class Spread(val region: Int, val x: Float, val y: Float, val at: Moment, val seconds: Float, val radius: Float, val painted: Boolean)
+    internal class Spread(val region: Int, val x: Float, val y: Float, val at: Moment, val seconds: Float, val radius: Float, val painted: Boolean) {
+        /** The wet front's gradient, made once at its full reach and scaled as it grows. */
+        var front: RadialGradient? = null
+    }
     internal class Sparkle(val x: Float, val y: Float, val size: Float, val at: Moment, val star: Boolean)
 
     private val unstamped = ArrayList<Pair<Moment, Float>>()
@@ -137,18 +141,37 @@ class CanvasMotion {
     }
 }
 
-/** The fills' render node was last recorded for these; a plain holder, since drawing reads and writes it. */
-private class Recorded {
+/**
+ * What drawing keeps between frames, remade only when the painting changes: the fills' render
+ * node (every painted area, recorded once per fill or undo), the paint in hand's unpainted
+ * cells, the classic lines, a gloss's areas; and per frame, without allocating, which spread
+ * each area has. A plain holder, since drawing reads and writes it.
+ */
+private class Recorded(regionCount: Int) {
+    val node = RenderNode("fills")
     var changes = -1
-    var excluding: Set<Int> = emptySet()
-    var tintKey: Triple<Int, Int, Set<Int>>? = null
+    var tintChanges = -1
+    var tintHeld = -2
     // Even-odd, as each area's own path: an area's hole stays out unless its island is in too.
     val tint = Path().apply { fillType = Path.FillType.EVEN_ODD }
-    var linesKey: Triple<Int, Int, Set<Int>>? = null
+    var linesChanges = -1
+    var linesHeld = -2
     var lines = FloatArray(0)
     var bold = FloatArray(0)
+    /** A spreading area's own lines, which the classic lines leave out once it is painted. */
+    val spreadLines = FloatArrayBuilder(256)
     var shineKey: Int? = null
     val shine = Path().apply { fillType = Path.FillType.EVEN_ODD }
+    /** Each area's spread this frame (an index into the spreads), or -1. */
+    val spreadOf = IntArray(regionCount) { -1 }
+}
+
+/** A drag that paints (iOS's long press, then drag): where it goes, in the view (px). */
+interface CanvasStroke {
+    /** The press has held: whether there is paint in hand to brush with. */
+    fun begin(at: Offset): Boolean
+    fun move(from: Offset, to: Offset)
+    fun end()
 }
 
 /**
@@ -161,14 +184,6 @@ private class Recorded {
  * settles; two gold sparkles pop beside it. Painted areas are recorded into a RenderNode
  * replayed at any zoom. [placement] says where the camera starts.
  */
-/** A drag that paints (iOS's long press, then drag): where it goes, in the view (px). */
-interface CanvasStroke {
-    /** The press has held: whether there is paint in hand to brush with. */
-    fun begin(at: Offset): Boolean
-    fun move(from: Offset, to: Offset)
-    fun end()
-}
-
 @Composable
 fun PaintCanvas(
     session: PaintSession,
@@ -188,8 +203,12 @@ fun PaintCanvas(
     val density = LocalDensity.current.density
     val scope = rememberCoroutineScope()
     val paints = remember(scene) { scene.paints.map { Linear.of(it.p3) } }
-    val node = remember { RenderNode("fills").apply { setPosition(0, 0, scene.width.toInt() + 1, scene.height.toInt() + 1) } }
-    val recorded = remember { Recorded() }
+    val recorded = remember(scene) {
+        Recorded(scene.regions.size).apply { node.setPosition(0, 0, scene.width.toInt() + 1, scene.height.toInt() + 1) }
+    }
+    DisposableEffect(recorded) { onDispose { recorded.node.discardDisplayList() } }
+    val numerals = remember(scene) { Array(scene.paints.size) { (it + 1).toString() } }
+    val edgesOf = remember(scene) { edgesByRegion(scene) }
     val book = remember(scene) { if (scene.isColoringBook) bookLines(session) else null }
     val sparkle = remember { sparklePath() }
     val star = remember { starPath() }
@@ -206,6 +225,16 @@ fun PaintCanvas(
         AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply { shader = BitmapShader(hatchTile, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT) }
     }
     val gloss = remember { AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply { blendMode = BlendMode.PLUS } }
+    // The gloss's band, across the diagonal, 6 × 70 pt wide and centered on 0: moved into place each frame.
+    val band = remember(density) {
+        val stops = floatArrayOf(0f, 0.2f, 0.35f, 0.5f, 0.65f, 0.8f, 1f)
+        val colors = IntArray(stops.size) {
+            val x = (stops[it] - 0.5f) * 6f
+            android.graphics.Color.argb(0.13f * exp(-x * x), 1f, 1f, 1f)
+        }
+        val reach = 3 * 70f * density * 0.70710678f
+        LinearGradient(-reach, -reach, reach, reach, colors, stops, Shader.TileMode.CLAMP)
+    }
     val line = remember {
         AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply {
             style = AndroidPaint.Style.STROKE
@@ -306,58 +335,65 @@ fun PaintCanvas(
                     var several = false
                     var strayed = false
                     var brush: Offset? = null
-                    while (true) {
-                        val waiting = !moving && !several && !strayed && brush == null
-                        val event: PointerEvent? = if (waiting) {
-                            withTimeoutOrNull((holdBy - currentEvent.changes.first().uptimeMillis).coerceAtLeast(0)) { awaitPointerEvent() }
-                        } else awaitPointerEvent()
-                        if (event == null) {
-                            // Held: a stroke, if there is paint in hand.
-                            if (strokeNow.begin(down.position)) {
-                                brush = down.position
-                                strokeHeld[0] = true
-                                motion.brush = down.position
-                            } else strayed = true
-                            continue
+                    var stroked = false
+                    try {
+                        while (true) {
+                            val waiting = !moving && !several && !strayed && brush == null
+                            val event: PointerEvent? = if (waiting) {
+                                withTimeoutOrNull((holdBy - currentEvent.changes.first().uptimeMillis).coerceAtLeast(0)) { awaitPointerEvent() }
+                            } else awaitPointerEvent()
+                            if (event == null) {
+                                // Held: a stroke, if there is paint in hand.
+                                if (strokeNow.begin(down.position)) {
+                                    brush = down.position
+                                    strokeHeld[0] = true
+                                    motion.brush = down.position
+                                } else strayed = true
+                                continue
+                            }
+                            if (event.changes.any { it.isConsumed }) break
+                            if (event.changes.count { it.pressed } > 1) several = true
+                            val finger = event.changes.firstOrNull { it.id == down.id }
+                            if (brush != null) {
+                                if (finger == null || !finger.pressed || several) break
+                                if (finger.positionChanged()) {
+                                    strokeNow.move(brush, finger.position)
+                                    brush = finger.position
+                                    motion.brush = brush
+                                    finger.consume()
+                                }
+                                continue
+                            }
+                            val zoomChange = event.calculateZoom()
+                            val panChange = event.calculatePan()
+                            if (!moving) {
+                                zoom *= zoomChange
+                                pan += panChange
+                                if (finger != null && (finger.position - down.position).getDistance() > stillWithin) strayed = true
+                                val zoomMotion = abs(1 - zoom) * event.calculateCentroidSize(useCurrent = false)
+                                if (zoomMotion > viewConfiguration.touchSlop || pan.getDistance() > viewConfiguration.touchSlop) {
+                                    moving = true
+                                    camera.moved()
+                                }
+                            }
+                            if (moving) {
+                                if (zoomChange != 1f || panChange != Offset.Zero) {
+                                    camera.transform(event.calculateCentroid(useCurrent = false), panChange, zoomChange, camera.deepest(density))
+                                }
+                                event.changes.forEach { if (it.positionChanged()) it.consume() }
+                            }
+                            finger?.let { tracker.addPointerInputChange(it) }
+                            if (event.changes.none { it.pressed }) break
                         }
-                        if (event.changes.any { it.isConsumed }) break
-                        if (event.changes.count { it.pressed } > 1) several = true
-                        val finger = event.changes.firstOrNull { it.id == down.id }
+                    } finally {
+                        // Lifted, or the gesture cancelled (the screen leaving, another taking the touch): the stroke ends either way.
                         if (brush != null) {
-                            if (finger == null || !finger.pressed || several) break
-                            if (finger.positionChanged()) {
-                                strokeNow.move(brush, finger.position)
-                                brush = finger.position
-                                motion.brush = brush
-                                finger.consume()
-                            }
-                            continue
+                            stroked = true
+                            motion.brush = null
+                            strokeNow.end()
                         }
-                        val zoomChange = event.calculateZoom()
-                        val panChange = event.calculatePan()
-                        if (!moving) {
-                            zoom *= zoomChange
-                            pan += panChange
-                            if (finger != null && (finger.position - down.position).getDistance() > stillWithin) strayed = true
-                            val zoomMotion = abs(1 - zoom) * event.calculateCentroidSize(useCurrent = false)
-                            if (zoomMotion > viewConfiguration.touchSlop || pan.getDistance() > viewConfiguration.touchSlop) {
-                                moving = true
-                                camera.moved()
-                            }
-                        }
-                        if (moving) {
-                            if (zoomChange != 1f || panChange != Offset.Zero) {
-                                camera.transform(event.calculateCentroid(useCurrent = false), panChange, zoomChange, camera.deepest(density))
-                            }
-                            event.changes.forEach { if (it.positionChanged()) it.consume() }
-                        }
-                        finger?.let { tracker.addPointerInputChange(it) }
-                        if (event.changes.none { it.pressed }) break
                     }
-                    if (brush != null) {
-                        motion.brush = null
-                        strokeNow.end()
-                    } else if (moving && !several) {
+                    if (!stroked && moving && !several) {
                         // A pinch doesn't fling: its last finger lifting would throw the painting.
                         camera.fling(scope, tracker.calculateVelocity().let { Offset(it.x, it.y) })
                     }
@@ -384,11 +420,17 @@ fun PaintCanvas(
         motion.spreads.removeAll { motion.since(it.at) > it.seconds + if (it.painted) CanvasLook.wetSettle else 0f }
         val scale = camera.scale
         val depth = camera.depth
-        val spreading = motion.spreads.filter { motion.since(it.at) < it.seconds }.map { it.region }.toSet()
-        if (recorded.changes != session.changes || recorded.excluding != spreading) {
-            recordFills(node, session, paints, spreading, fill)
+        val spreads = motion.spreads
+        val spreadOf = recorded.spreadOf
+        for (i in spreads.indices) spreadOf[spreads[i].region] = i
+        // Whether paint is still spreading over area r (it shows the spread, not the fill).
+        fun spreading(r: Int): Boolean {
+            val i = spreadOf[r]
+            return i >= 0 && spreads[i].painted && motion.since(spreads[i].at) < spreads[i].seconds
+        }
+        if (recorded.changes != session.changes) {
+            recordFills(recorded.node, session, paints, fill)
             recorded.changes = session.changes
-            recorded.excluding = spreading
         }
         val held = session.selected.takeIf { it in scene.paints.indices && !session.isComplete }
 
@@ -411,20 +453,17 @@ fun PaintCanvas(
 
             // The paint in hand's cells: a tint of it, hatched in screen space.
             if (held != null) {
-                val key = Triple(session.changes, held, spreading)
-                if (recorded.tintKey != key) {
+                if (recorded.tintChanges != session.changes || recorded.tintHeld != held) {
                     recorded.tint.rewind()
                     for (r in scene.regionsByPaint[held]) {
-                        if (!session.progress.isPainted(r) || r in spreading || motion.spreads.any { it.region == r && !it.painted }) {
-                            recorded.tint.addPath(scene.regions[r].path)
-                        }
+                        if (!session.progress.isPainted(r)) recorded.tint.addPath(scene.regions[r].path)
                     }
-                    recorded.tintKey = key
+                    recorded.tintChanges = session.changes
+                    recorded.tintHeld = held
                 }
                 val since = motion.selectionAt?.let { motion.since(it).coerceAtLeast(0f) } ?: 10f
                 val paint = paints[held]
                 fill.setColor(CanvasLook.tint(paint, since).pack())
-                canvas.drawPath(recorded.tint, fill)
                 val tileSide = CanvasLook.hatchPeriod * 1.4142135f * density
                 val phase = CanvasLook.hatchPhase(since) * 0.70710678f * density
                 local.setScale(tileSide / hatchTile.width, tileSide / hatchTile.height)
@@ -433,10 +472,21 @@ fun PaintCanvas(
                 local.postScale(px, px)
                 hatch.shader.setLocalMatrix(local)
                 hatch.setColor(CanvasLook.hatch(paint, since).pack())
+                canvas.drawPath(recorded.tint, fill)
                 canvas.drawPath(recorded.tint, hatch)
+                // Its cells paint is spreading over still show the tint until the front passes.
+                for (sp in spreads) {
+                    if (!spreading(sp.region) || scene.regions[sp.region].paint != held) continue
+                    canvas.drawPath(scene.regions[sp.region].path, fill)
+                    canvas.drawPath(scene.regions[sp.region].path, hatch)
+                }
             }
 
-            canvas.drawRenderNode(node)
+            // The painted areas, but those paint is still spreading over, which draw below.
+            canvas.save()
+            for (sp in spreads) if (spreading(sp.region)) canvas.clipOutPath(scene.regions[sp.region].path)
+            canvas.drawRenderNode(recorded.node)
+            canvas.restore()
 
             // Paint spreading from the tap (a soft front with a bright wet rim), paint lifting
             // off after an undo, and fresh paint a little deeper until it settles.
@@ -460,21 +510,29 @@ fun PaintCanvas(
                 }
                 val e = 1 - (1 - t.coerceIn(0f, 1f)).pow(3)
                 val soft = max(s.radius * 0.1f, 2f * px)
-                val front = e * (s.radius + soft) * 1.12f
+                val reach = (s.radius + soft) * 1.12f
+                val front = e * reach
                 if (front <= 0f) continue
+                // Made once, at its full reach (its soft rim a fixed share of it), and scaled.
+                val gradient = s.front ?: run {
+                    val wet = color * 0.88f
+                    val wetColor = wet.pack()
+                    val sheen = Linear(min(color.r * 1.3f + 0.07f, 1f), min(color.g * 1.3f + 0.07f, 1f), min(color.b * 1.3f + 0.07f, 1f))
+                    val inner = ((reach - soft) / reach).coerceIn(0f, 1f)
+                    val rimAt = ((reach - soft * 0.7f) / reach).coerceIn(inner, 1f)
+                    RadialGradient(
+                        0f, 0f, 1f,
+                        longArrayOf(wetColor, wetColor, wet.mix(sheen, 0.4f).pack(), wet.pack(0f)),
+                        floatArrayOf(0f, inner, rimAt, 1f),
+                        Shader.TileMode.CLAMP,
+                    ).also { s.front = it }
+                }
+                local.setScale(front, front)
+                local.postTranslate(s.x, s.y)
+                gradient.setLocalMatrix(local)
                 canvas.save()
                 canvas.clipPath(region.path)
-                val wetColor = (color * 0.88f).pack()
-                val sheen = Linear(min(color.r * 1.3f + 0.07f, 1f), min(color.g * 1.3f + 0.07f, 1f), min(color.b * 1.3f + 0.07f, 1f))
-                val rim = wetColor.let { Linear.of(it).mix(sheen, 0.4f).pack() }
-                val inner = ((front - soft) / front).coerceIn(0f, 1f)
-                val rimAt = ((front - soft * 0.7f) / front).coerceIn(inner, 1f)
-                fill.shader = RadialGradient(
-                    s.x, s.y, front,
-                    longArrayOf(wetColor, wetColor, rim, Linear.of(wetColor).pack(0f)),
-                    floatArrayOf(0f, inner, rimAt, 1f),
-                    Shader.TileMode.CLAMP,
-                )
+                fill.shader = gradient
                 canvas.drawCircle(s.x, s.y, front, fill)
                 fill.shader = null
                 canvas.restore()
@@ -501,18 +559,11 @@ fun PaintCanvas(
                 }
                 val span = (size.width + size.height) / density * 0.70710678f
                 val head = (-160f + (span + 320f) * smoothstep(0f, CanvasLook.shineSeconds, since)) * density
-                val w = 70f * density
-                val stops = floatArrayOf(0f, 0.2f, 0.35f, 0.5f, 0.65f, 0.8f, 1f)
-                val colors = IntArray(stops.size) {
-                    val x = (stops[it] - 0.5f) * 6f
-                    android.graphics.Color.argb(0.13f * exp(-x * x), 1f, 1f, 1f)
-                }
                 val d = 0.70710678f
-                val gradient = LinearGradient((head - 3 * w) * d, (head - 3 * w) * d, (head + 3 * w) * d, (head + 3 * w) * d, colors, stops, Shader.TileMode.CLAMP)
-                local.setTranslate(-camera.offset.x, -camera.offset.y)
+                local.setTranslate(head * d - camera.offset.x, head * d - camera.offset.y)
                 local.postScale(px, px)
-                gradient.setLocalMatrix(local)
-                gloss.shader = gradient
+                band.setLocalMatrix(local)
+                gloss.shader = band
                 canvas.drawPath(recorded.shine, gloss)
             }
 
@@ -523,18 +574,29 @@ fun PaintCanvas(
                 line.setColor(CanvasLook.ink.pack(min(1f, widthPx)))
                 canvas.drawLines(book, line)
             } else {
-                val key = Triple(session.changes, held ?: -1, spreading)
-                if (recorded.linesKey != key) {
-                    val (normal, bold) = classicLines(session, held, spreading)
+                if (recorded.linesChanges != session.changes || recorded.linesHeld != (held ?: -1)) {
+                    val (normal, bold) = classicLines(session, held)
                     recorded.lines = normal
                     recorded.bold = bold
-                    recorded.linesKey = key
+                    recorded.linesChanges = session.changes
+                    recorded.linesHeld = held ?: -1
                 }
                 val strength = CanvasLook.outlineOpacity * CanvasLook.classicStrength(depth)
                 val widthPx = CanvasLook.classicWidth(depth) * density
                 line.strokeWidth = max(widthPx, 1f) * px
                 line.setColor(CanvasLook.ink.pack(strength * min(1f, widthPx)))
                 canvas.drawLines(recorded.lines, line)
+                // An area paint is spreading over keeps the lines its fill dissolves until it lands.
+                val extra = recorded.spreadLines
+                extra.clear()
+                for (sp in spreads) {
+                    if (!spreading(sp.region)) continue
+                    for (e in edgesOf[sp.region]) {
+                        val edge = scene.edges[e]
+                        if (dissolved(session, edge.left) && dissolved(session, edge.right)) extra.polyline(edge.points)
+                    }
+                }
+                if (extra.size > 0) canvas.drawLines(extra.array, 0, extra.size, line)
                 val boldPx = (CanvasLook.classicWidth(depth) + CanvasLook.selectedExtraWidth) * density
                 line.strokeWidth = max(boldPx, 1f) * px
                 line.setColor(CanvasLook.ink.pack(min(1f, strength * 1.3f) * min(1f, boldPx)))
@@ -565,7 +627,7 @@ fun PaintCanvas(
                     if (legible <= 0f && bump <= 0f) continue
                     val reach = label.fontSize
                     if (label.x < left - reach || label.x > right + reach || label.y < top - reach || label.y > bottom + reach) continue
-                    val coverage = paintCoverage(session, motion, region)
+                    val coverage = paintCoverage(session, motion, spreadOf[region], region)
                     if (coverage >= 1f) continue
                     fontPx = min(fontPx, largest)
                     if (bump > 0f) fontPx += (max(fontPx * 1.3f, CanvasLook.numberBumped * density) - fontPx) * (if (motion.still) 1f else bump)
@@ -584,10 +646,11 @@ fun PaintCanvas(
                         number.style = AndroidPaint.Style.FILL
                     }
                     number.setColor(CanvasLook.ink.pack(alpha))
-                    canvas.drawText((paint + 1).toString(), label.x, label.y + textSize * digitMiddle, number)
+                    canvas.drawText(numerals[paint], label.x, label.y + textSize * digitMiddle, number)
                 }
             }
             canvas.restore()
+            for (sp in spreads) spreadOf[sp.region] = -1
 
             // The fill's two gold sparkles, in the view's space as iOS lays them.
             val gold = Moonlight.gold
@@ -629,11 +692,11 @@ fun PaintCanvas(
     }
 }
 
-/** How much paint covers [region] now, 0…1: what fades its number. */
-private fun paintCoverage(session: PaintSession, motion: CanvasMotion, region: Int): Float {
-    val s = motion.spreads.lastOrNull { it.region == region }
+/** How much paint covers [region] now, 0…1: what fades its number. [spread] is its spread's index, or -1. */
+private fun paintCoverage(session: PaintSession, motion: CanvasMotion, spread: Int, region: Int): Float {
     val painted = session.progress.isPainted(region)
-    if (s == null) return if (painted) 1f else 0f
+    if (spread < 0) return if (painted) 1f else 0f
+    val s = motion.spreads[spread]
     val t = (motion.since(s.at) / s.seconds).coerceIn(0f, 1f)
     return if (s.painted) smoothstep(0f, 1f, t) else 1 - smoothstep(0f, 1f, t)
 }
@@ -643,13 +706,13 @@ private fun smoothstep(a: Float, b: Float, x: Float): Float {
     return k * k * (3 - 2 * k)
 }
 
-/** Records every painted area but those spreading, in its paint. */
-private fun recordFills(node: RenderNode, session: PaintSession, paints: List<Linear>, except: Set<Int>, fill: AndroidPaint) {
+/** Records every painted area in its paint. */
+private fun recordFills(node: RenderNode, session: PaintSession, paints: List<Linear>, fill: AndroidPaint) {
     val scene = session.scene
     val canvas = node.beginRecording()
     try {
         scene.regions.forEachIndexed { i, region ->
-            if (session.progress.isPainted(i) && i !in except) {
+            if (session.progress.isPainted(i)) {
                 fill.setColor(paints[region.paint].pack())
                 canvas.drawPath(region.path, fill)
             }
@@ -666,14 +729,17 @@ private fun FloatArrayBuilder.polyline(points: FloatArray) {
 }
 
 private class FloatArrayBuilder(capacity: Int) {
-    private var a = FloatArray(max(capacity, 16))
-    private var n = 0
+    var array = FloatArray(max(capacity, 16))
+        private set
+    var size = 0
+        private set
     fun add(x0: Float, y0: Float, x1: Float, y1: Float) {
-        if (n + 4 > a.size) a = a.copyOf(a.size * 2)
-        a[n] = x0; a[n + 1] = y0; a[n + 2] = x1; a[n + 3] = y1
-        n += 4
+        if (size + 4 > array.size) array = array.copyOf(array.size * 2)
+        array[size] = x0; array[size + 1] = y0; array[size + 2] = x1; array[size + 3] = y1
+        size += 4
     }
-    fun build() = a.copyOf(n)
+    fun clear() { size = 0 }
+    fun build() = array.copyOf(size)
 }
 
 /** A coloring book's drawing: its drawn edges and the lines inside cells, all alike. */
@@ -685,15 +751,18 @@ private fun bookLines(session: PaintSession): FloatArray {
     return out.build()
 }
 
+/** Whether an edge's side lets it dissolve: a painted area, or the sheet's border. */
+private fun dissolved(session: PaintSession, r: Int) = r == Edge.OUTSIDE || session.progress.isPainted(r)
+
 /**
  * A classic painting's lines, as iOS's outline pass draws them: an edge between two painted
  * areas (or a painted one and the sheet's border) dissolves; one beside an unpainted cell of the
  * paint in hand is drawn bold.
  */
-private fun classicLines(session: PaintSession, held: Int?, spreading: Set<Int>): Pair<FloatArray, FloatArray> {
+private fun classicLines(session: PaintSession, held: Int?): Pair<FloatArray, FloatArray> {
     val scene = session.scene
-    fun painted(r: Int) = r !in scene.regions.indices || (session.progress.isPainted(r) && r !in spreading)
-    fun selected(r: Int) = held != null && r in scene.regions.indices && scene.regions[r].paint == held && !painted(r)
+    fun painted(r: Int) = dissolved(session, r)
+    fun selected(r: Int) = held != null && r != Edge.OUTSIDE && scene.regions[r].paint == held && !painted(r)
     val normal = FloatArrayBuilder(1024)
     val bold = FloatArrayBuilder(256)
     for (edge in scene.edges) {
@@ -787,4 +856,14 @@ private fun popSparkles(
         val at = motion.moment(delay = seconds * 0.8f + k * 0.08f, lasts = 0.8f)
         motion.sparkles.add(CanvasMotion.Sparkle(cx + reach * cos(angle), cy + reach * sin(angle), size * if (k == 0) 1f else 0.7f, at, star))
     }
+}
+
+/** Each area's edges, by index into the scene's. */
+private fun edgesByRegion(scene: com.paintbymoonlight.core.Scene): Array<IntArray> {
+    val lists = Array(scene.regions.size) { ArrayList<Int>() }
+    scene.edges.forEachIndexed { i, e ->
+        lists[e.left].add(i)
+        if (e.right != Edge.OUTSIDE) lists[e.right].add(i)
+    }
+    return Array(lists.size) { lists[it].toIntArray() }
 }

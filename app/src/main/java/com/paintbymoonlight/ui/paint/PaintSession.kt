@@ -121,9 +121,11 @@ class PaintSession(val scene: Scene, val progress: Progress) {
     /**
      * Takes the last step back: a tap's fill, or everything a stroke painted. The paint in hand
      * stays in hand, as on iOS; a finished painting, which holds none, takes up the undone
-     * area's. Returns the last area undone.
+     * area's. Returns the last area undone. Undone mid-stroke, the stroke ends there, and the
+     * step taken back is what it had painted; the rest of the drag paints nothing.
      */
     fun undo(): Int? {
+        if (strokePaint != null) endStroke()
         var last: Int? = null
         repeat(steps.removeLastOrNull() ?: 1) {
             val region = progress.undo() ?: return@repeat

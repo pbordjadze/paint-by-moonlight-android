@@ -90,7 +90,6 @@ class Camera {
     private var flight: Job? = null
     private var landing: Placement? = null
     private var fling: Job? = null
-    val isFlying get() = flight?.isActive == true
     val isFlinging get() = fling?.isActive == true
 
     /** The painting's size, the margin kept round it, and its small numbers' size (canvas units). */
