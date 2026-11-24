@@ -2,7 +2,21 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.baselineprofile)
 }
+
+// The upload key (docs/release.md): CI writes the keystore from its secrets and names it here.
+// Without one, a release build is signed with the debug key on a developer's machine (to install
+// for a look) and left unsigned on CI, so nothing debug-signed can reach Play.
+val uploadStore = System.getenv("MOONLIGHT_UPLOAD_STORE_FILE")?.let(::file)?.takeIf { it.isFile }
+val onCI = System.getenv("CI") == "true"
+
+// versionCode: the number of commits on HEAD, which only grows along main, where releases are
+// made from (a full clone; VERSION_CODE overrides it). versionName: gradle.properties.
+val commitCount = providers.exec {
+    commandLine("git", "rev-list", "--count", "HEAD")
+    isIgnoreExitValue = true
+}.standardOutput.asText.map { it.trim().toIntOrNull() ?: 1 }
 
 android {
     namespace = "com.paintbymoonlight"
@@ -14,10 +28,21 @@ android {
         applicationId = "com.pbordjadze.paintbymoonlight"
         minSdk = 29
         targetSdk = 37
-        versionCode = (System.getenv("VERSION_CODE") ?: "1").toInt()
-        versionName = "1.0"
+        versionCode = System.getenv("VERSION_CODE")?.toInt() ?: commitCount.get()
+        versionName = providers.gradleProperty("moonlight.versionName").get()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+    }
+
+    signingConfigs {
+        if (uploadStore != null) {
+            create("upload") {
+                storeFile = uploadStore
+                storePassword = System.getenv("MOONLIGHT_UPLOAD_STORE_PASSWORD")
+                keyAlias = System.getenv("MOONLIGHT_UPLOAD_KEY_ALIAS")
+                keyPassword = System.getenv("MOONLIGHT_UPLOAD_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -25,9 +50,11 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Signed in CI from the upload key's secrets once Play Console exists; until then
-            // release builds are signed with the debug key so they install for a look.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = when {
+                uploadStore != null -> signingConfigs.getByName("upload")
+                onCI -> null
+                else -> signingConfigs.getByName("debug")
+            }
         }
     }
     compileOptions {
@@ -42,7 +69,27 @@ android {
     }
 }
 
+// The benchmark builds the baselineprofile plugin adds also get BenchmarkSeed, which paints the
+// macrobenchmarks' library from the tour's photos; the release has neither.
+androidComponents {
+    onVariants { variant ->
+        if (variant.buildType !in setOf("benchmarkRelease", "nonMinifiedRelease")) return@onVariants
+        variant.sources.kotlin?.addStaticSourceDirectory("src/benchmarkSeed/java")
+        variant.sources.assets?.addStaticSourceDirectory("src/androidTest/assets")
+        variant.sources.manifests.addStaticManifestFile("src/benchmarkSeed/AndroidManifest.xml")
+    }
+}
+
+baselineProfile {
+    // Generated on CI's emulator (docs/release.md › Baseline profile) and committed, so a
+    // release build never waits on a device.
+    mergeIntoMain = true
+    automaticGenerationDuringBuild = false
+}
+
 dependencies {
+    baselineProfile(project(":baselineprofile"))
+    implementation(libs.androidx.profileinstaller)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.navigation.compose)
@@ -67,4 +114,27 @@ dependencies {
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.uiautomator)
+}
+
+// Play's download size per ABI of the release bundle (bundletool's get-size over the split APKs
+// Play would serve): `./gradlew :app:bundleSize`, which scripts/sizes.sh reports.
+val bundletool = configurations.create("bundletool")
+dependencies { bundletool(libs.bundletool) }
+val releaseBundle = layout.buildDirectory.file("outputs/bundle/release/app-release.aab")
+val releaseApks = layout.buildDirectory.file("outputs/sizes/app-release.apks")
+val bundleApks = tasks.register<JavaExec>("bundleApks") {
+    dependsOn("bundleRelease")
+    classpath = bundletool
+    mainClass = "com.android.tools.build.bundletool.BundleToolMain"
+    inputs.file(releaseBundle)
+    outputs.file(releaseApks)
+    doFirst { releaseApks.get().asFile.delete() }
+    val aapt2 = androidComponents.sdkComponents.sdkDirectory.get().dir("build-tools/${android.buildToolsVersion}/aapt2")
+    args("build-apks", "--bundle=${releaseBundle.get().asFile}", "--output=${releaseApks.get().asFile}", "--aapt2=$aapt2")
+}
+tasks.register<JavaExec>("bundleSize") {
+    dependsOn(bundleApks)
+    classpath = bundletool
+    mainClass = "com.android.tools.build.bundletool.BundleToolMain"
+    args("get-size", "total", "--apks=${releaseApks.get().asFile}", "--dimensions=ABI")
 }

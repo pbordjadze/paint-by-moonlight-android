@@ -1,0 +1,76 @@
+# The Play release, on request (Run workflow): the core, then the App Bundle signed with the upload
+# key from the repository's secrets (docs/release.md), its download size per ABI in the run's
+# summary (scripts/sizes.sh), and the bundle as the run's artifact, ready for Play Console. The
+# versionCode is the number of commits on the commit it's run from (a full clone), so run it from
+# main; without the key's secrets the bundle is built unsigned, for a size check, and named so.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_code:
+        description: versionCode override (blank for the commit count)
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/core
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: The upload key
+        id: key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::No upload key in the secrets (docs/release.md): the bundle is unsigned and can't go to Play."
+            echo "name=unsigned" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          echo "MOONLIGHT_UPLOAD_STORE_FILE=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
+          echo "name=signed" >> "$GITHUB_OUTPUT"
+
+      - name: Build the bundle
+        env:
+          VERSION_CODE: ${{ inputs.version_code }}
+          MOONLIGHT_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_STORE_PASSWORD }}
+          MOONLIGHT_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+          MOONLIGHT_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [ -n "$VERSION_CODE" ] || unset VERSION_CODE
+          ./gradlew --console=plain :app:bundleRelease
+          rm -f "$RUNNER_TEMP/upload.jks"
+          aab=app/build/outputs/bundle/release/app-release.aab
+          if [ "${{ steps.key.outputs.name }}" = signed ]; then
+            keytool -printcert -jarfile "$aab" | tee cert.txt
+            if grep -q "CN=Android Debug" cert.txt; then echo "::error::signed with a debug key"; exit 1; fi
+          fi
+
+      - name: Sizes
+        run: scripts/sizes.sh | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paint-by-moonlight-${{ steps.key.outputs.name }}-${{ github.sha }}
+          path: |
+            app/build/outputs/bundle/release/app-release.aab
+            app/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: error
