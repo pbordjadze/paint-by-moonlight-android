@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import com.paintbymoonlight.ui.LocalSharedTransition
 import com.paintbymoonlight.ui.paintingBounds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -33,7 +34,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.VectorConverter
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -98,6 +100,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -155,7 +158,8 @@ private fun Opening(id: String, thumbnail: File) {
                 modifier = Modifier.padding(24.dp).then(paintingBounds(id, RectangleShape)),
             )
         }
-        if (slow) LoadingIndicator()
+        // Under the picture, never over it.
+        if (slow) LoadingIndicator(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 48.dp))
     }
 }
 
@@ -418,7 +422,16 @@ private fun Painting(
             } else {
                 FINISHED_ROOM * LocalDensity.current.fontScale + navigation
             }
-            val reserve by animateDpAsState(if (complete) room else 0.dp, MaterialTheme.motionScheme.defaultSpatialSpec(), label = "room")
+            // Eased (finishing, undoing the last area, the first measurement), except during the
+            // opening transition: a painting opened finished lands on its final layout.
+            val target = if (complete) room else 0.dp
+            val opening = LocalSharedTransition.current?.isTransitionActive == true
+            val eased = remember { Animatable(target, Dp.VectorConverter) }
+            val ease = MaterialTheme.motionScheme.defaultSpatialSpec<Dp>()
+            LaunchedEffect(target, opening) {
+                if (opening) eased.snapTo(target) else eased.animateTo(target, ease)
+            }
+            val reserve = eased.value
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().background(paper)) {
                 val limit = with(LocalDensity.current) { (maxHeight - reserve).toPx() }
                 val gap = with(LocalDensity.current) { FINISHED_GAP.toPx() }
@@ -627,7 +640,8 @@ private fun TopBar(
                 Spacer(Modifier.width(4.dp))
             }
             Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                // A long title takes a second line rather than losing its end.
+                Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(
                     when {
                         !complete -> "${(fraction * 100).toInt()}% painted"

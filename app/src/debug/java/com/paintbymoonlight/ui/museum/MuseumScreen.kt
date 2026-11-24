@@ -36,7 +36,6 @@ import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Button
-import androidx.compose.material3.ContainedLoadingIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -44,6 +43,7 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -160,7 +160,7 @@ fun MuseumScreen(library: Library, onWork: (String) -> Unit, onClose: () -> Unit
         Box(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
             when (val s = state) {
                 MuseumLibrary.State.Loading -> Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                    ContainedLoadingIndicator()
+                    LoadingIndicator()
                     Spacer(Modifier.height(16.dp))
                     Text("Opening the Museum…", style = MaterialTheme.typography.bodyLarge)
                 }

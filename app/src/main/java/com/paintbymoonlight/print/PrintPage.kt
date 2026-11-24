@@ -35,8 +35,7 @@ internal object PrintPage {
 
     /** Draws a page's title and [detail] across the top of [content]; returns the body below them. */
     fun header(canvas: Canvas, content: RectF, title: String, detail: String): RectF {
-        // Titles in the serif the numerals and the app's titles are set in.
-        val titlePaint = text(17f, color = gray(0.1f)).apply { typeface = Typeface.create(Typeface.SERIF, 500, false) }
+        val titlePaint = serif(17f, color = gray(0.1f))
         canvas.drawText(ellipsized(title, titlePaint, content.width() * 0.7f), content.left, content.top + 14f, titlePaint)
         canvas.drawText(detail, content.right, content.top + 13f, text(9f, color = gray(0.45f), align = Paint.Align.RIGHT))
         canvas.drawLine(content.left, content.top + 24f, content.right, content.top + 24f, stroke(gray(0.85f), 0.5f))
@@ -171,7 +170,7 @@ internal object PrintPage {
         val dot = Paint(Paint.ANTI_ALIAS_FLAG)
         // A ring dark enough that the palest paints still show on white.
         val ring = stroke(gray(0f, 0.35f), 0.5f)
-        val numberText = text(8f * s, bold = true, color = gray(0.12f), align = Paint.Align.RIGHT)
+        val numberText = serif(8f * s, weight = 700, color = gray(0.12f), align = Paint.Align.RIGHT)
         val nameText = text(8f * s, bold = true, color = gray(0.12f))
         val detailText = text(6f * s, color = gray(0.5f))
         val textWidth = key.columnWidth - KEY_NAME_INSET * s
@@ -206,6 +205,15 @@ internal object PrintPage {
         TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             textSize = size
             typeface = if (bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            this.color = color
+            textAlign = align
+        }
+
+    /** Titles and numerals: in the serif, as the app sets them. */
+    fun serif(size: Float, weight: Int = 500, color: Int = 0xFF000000.toInt(), align: Paint.Align = Paint.Align.LEFT) =
+        TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = size
+            typeface = Typeface.create(Typeface.SERIF, weight, false)
             this.color = color
             textAlign = align
         }

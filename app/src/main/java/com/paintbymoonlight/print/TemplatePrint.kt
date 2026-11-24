@@ -193,7 +193,7 @@ class TemplatePrint(
                 val r = RectF(f.centerX() - discWidth / 2, f.centerY() - size * 0.7f, f.centerX() + discWidth / 2, f.centerY() + size * 0.7f)
                 canvas.drawRoundRect(r, size * 0.7f, size * 0.7f, disc)
                 canvas.drawText(label, f.centerX(), f.centerY() + size * 0.35f,
-                    PrintPage.text(size, bold = true, color = PrintPage.gray(0.3f, 0.8f), align = Paint.Align.CENTER))
+                    PrintPage.serif(size, weight = 700, color = PrintPage.gray(0.3f, 0.8f), align = Paint.Align.CENTER))
             }
         }
     }
@@ -222,8 +222,8 @@ class TemplatePrint(
         val used = PrintPage.legend(canvas, scene, layout, body)
         val remaining = RectF(body.left, body.top + used + 24f, body.right, body.bottom)
         if (remaining.height() > 110f) {
-            canvas.drawText("Reference", remaining.left, remaining.top + 10f, PrintPage.text(10f, bold = true, color = PrintPage.gray(0.35f)))
-            val area = RectF(remaining.left, remaining.top + 20f, remaining.right, remaining.bottom)
+            canvas.drawText("Reference", remaining.left, remaining.top + 12f, PrintPage.serif(13f, color = PrintPage.gray(0.2f)))
+            val area = RectF(remaining.left, remaining.top + 22f, remaining.right, remaining.bottom)
             PrintPage.painting(canvas, scene, PrintPage.fit(aspect, area))
         }
     }

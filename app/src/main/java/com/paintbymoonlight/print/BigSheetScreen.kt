@@ -225,7 +225,7 @@ private fun Choices(model: BigSheetViewModel, modifier: Modifier) {
         }
         Spacer(Modifier.height(8.dp))
         Notes(model)
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(32.dp))
     }
 }
 
@@ -394,7 +394,8 @@ private fun OrderBar(
     val offered = quote?.googlePay
     val googlePay = offered?.takeIf { googlePayReady }
     val ready = quote != null && !model.placing && model.scene != null
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 2.dp) {
+    // Raised, so the notes scrolling under it read as going on rather than cut off.
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 2.dp, shadowElevation = 6.dp) {
         Column(
             Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,

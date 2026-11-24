@@ -17,6 +17,7 @@ import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onRoot
@@ -241,7 +242,11 @@ class AppTour {
     fun e_finished() {
         ensurePaintings()
         openPainting("Lighthouse")
-        waitFor(hasText("Print it big"), 5_000)
+        // The heading and both actions, so the shot is the settled screen, not the opening transition.
+        waitFor(hasText("Finished!"), 10_000)
+        waitFor(hasText("Print it big") and isEnabled(), 5_000)
+        waitFor(hasText("Share"), 5_000)
+        compose.waitForIdle()
         shoot("09-finished")
         compose.onNode(hasText("Print it big")).performClick()
         waitFor(hasText("One Big Sheet"))
@@ -337,7 +342,8 @@ class AppTour {
         Thread.sleep(3_000)
         shoot("19-museum-work")
         compose.onNode(hasText("Paint This")).performClick()
-        waitFor(hasText("Start painting"), 60_000)
+        // Enabled once the work's photo is decoded, so the shot shows the picture.
+        waitFor(hasText("Start painting") and isEnabled(), 60_000)
         shoot("20-museum-create")
     }
 

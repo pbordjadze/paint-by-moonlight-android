@@ -11,6 +11,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.lifecycle.SavedStateHandle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -187,9 +189,12 @@ class PrintTest {
                 compose.activity.enableEdgeToEdge()
                 compose.activity.setContent { MoonlightTheme { PrintScreen(model = model, onBack = {}) } }
             }
+            // Until the first page is drawn in full (its quick pass says Loading).
             compose.waitUntil(30_000) {
-                compose.onAllNodes(hasContentDescription("How the sheets tape together", substring = true)
-                    .or(hasContentDescription("Page 1 of", substring = true))).fetchSemanticsNodes().isNotEmpty()
+                compose.onAllNodes(
+                    (hasContentDescription("How the sheets tape together", substring = true) or hasContentDescription("Page 1 of", substring = true))
+                        and SemanticsMatcher.keyNotDefined(SemanticsProperties.StateDescription),
+                ).fetchSemanticsNodes().isNotEmpty()
             }
             compose.waitForIdle()
             Thread.sleep(1_500)

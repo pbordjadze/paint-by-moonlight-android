@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -21,12 +22,12 @@ import androidx.compose.material.icons.rounded.Brush
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ButtonGroupDefaults
-import androidx.compose.material3.ContainedLoadingIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearWavyProgressIndicator
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -37,6 +38,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -82,25 +84,28 @@ fun CreateScreen(model: CreateViewModel, preferences: Preferences, onBack: () ->
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                val photo = model.photo
+                // The quick first read shows at once; the full picture takes its place when read.
+                val shown = model.photo ?: model.preview
+                val image = remember(shown) { shown?.asImageBitmap() }
                 when {
-                    model.failed != null && photo == null -> Text(model.failed!!, textAlign = TextAlign.Center)
-                    photo == null -> ContainedLoadingIndicator()
+                    model.failed != null && model.photo == null -> Text(model.failed!!, textAlign = TextAlign.Center)
+                    image == null -> LoadingIndicator()
                     else -> {
                         Image(
-                            bitmap = photo.asImageBitmap(),
+                            bitmap = image,
                             contentDescription = model.credit?.first ?: "Your photo",
                             contentScale = ContentScale.Fit,
-                            modifier = Modifier.clip(RoundedCornerShape(28.dp)),
+                            // As large as fits, whichever read it is: the preview is small in pixels.
+                            modifier = Modifier.aspectRatio(image.width / image.height.toFloat()).clip(RoundedCornerShape(28.dp)),
                         )
-                        if (model.making) ContainedLoadingIndicator(Modifier.size(72.dp))
+                        if (model.making || model.photo == null) LoadingIndicator(Modifier.size(72.dp))
                     }
                 }
             }
             // A picture that isn't the painter's own keeps its maker's name in view.
             model.credit?.let { (title, byline) ->
                 Spacer(Modifier.height(12.dp))
-                Text(title, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+                Text(title, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
                 if (byline.isNotEmpty()) {
                     Text(byline, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                 }
