@@ -1,0 +1,14 @@
+shared-v1-names.moonlight
+  title "Irises at Dusk", settings sent, names seed 11400714819323198485 version 2
+  photo 0 bytes
+  template 192x144, 5 areas, 4 paints, 10147 bytes, hash 31657d265798b30e
+  valid true
+  sent again: 3630 bytes, lzfse, read back whole
+  2404 damaged copies read, 2194 refused, none crashed
+shared-v1-photo.moonlight
+  title "Irises at Dusk", settings sent, names none
+  photo 663 bytes
+  template 192x144, 5 areas, 4 paints, 10147 bytes, hash 31657d265798b30e
+  valid true
+  sent again: 4249 bytes, lzfse, read back whole
+  2425 damaged copies read, 1893 refused, none crashed

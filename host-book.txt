@@ -1,0 +1,7 @@
+photo 768x512, length relaxed
+settings colors 40 detail 0.52 smoothness 0.47 lines coloringBook
+template 1152x768, 227 areas, 40 paints, 945817 bytes
+scene 335630 bytes
+valid true
+seconds 0.51
+hash 624fb42acc5bd722

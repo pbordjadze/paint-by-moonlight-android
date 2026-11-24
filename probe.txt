@@ -1,0 +1,7 @@
+photo 768x512, length relaxed
+settings colors 40 detail 0.52 smoothness 0.47 lines classic
+template 1152x768, 236 areas, 38 paints, 1165059 bytes
+scene 419473 bytes
+valid true
+seconds 1.93
+hash bd9443e8dd7fd594
