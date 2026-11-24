@@ -1,8 +1,5 @@
 package com.paintbymoonlight.ui.theme
 
-import android.app.Activity
-import android.content.Context
-import android.content.ContextWrapper
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -12,14 +9,11 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.core.view.WindowCompat
 
 /**
  * Paint by Moonlight's colors, from the iOS design system's tokens: Nightshade (`signature`)
@@ -63,7 +57,7 @@ internal val LightColors = lightColorScheme(
     outlineVariant = Color(0xFFD0C3CD),
 )
 
-// Nightshade lifted just enough to read on the dark paper (5.8:1), so the FAB, the main buttons
+// Nightshade lifted just enough to read on the dark paper (5.5:1), so the FAB, the main buttons
 // and the text buttons keep the signature color instead of M3's pale pink; ink dark on it (6:1).
 internal val DarkColors = darkColorScheme(
     primary = Color(0xFFB57BB8),
@@ -120,36 +114,10 @@ val NumeralFamily = FontFamily.Serif
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun MoonlightTheme(darkTheme: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
-    SystemBarIcons(darkTheme)
     MaterialExpressiveTheme(
         colorScheme = if (darkTheme) DarkColors else LightColors,
         motionScheme = MotionScheme.expressive(),
         typography = typography,
         content = content,
     )
-}
-
-
-/**
- * The status and navigation bars' icons dark on the light paper and light on the dark, whatever
- * window the theme is drawn in (an activity whose own theme says otherwise, or one recreated
- * for a change of appearance), so they never vanish into the screen behind them.
- */
-@Composable
-private fun SystemBarIcons(darkTheme: Boolean) {
-    val view = LocalView.current
-    if (view.isInEditMode) return
-    SideEffect {
-        val window = view.context.activity()?.window ?: return@SideEffect
-        WindowCompat.getInsetsController(window, view).apply {
-            isAppearanceLightStatusBars = !darkTheme
-            isAppearanceLightNavigationBars = !darkTheme
-        }
-    }
-}
-
-private tailrec fun Context.activity(): Activity? = when (this) {
-    is Activity -> this
-    is ContextWrapper -> baseContext.activity()
-    else -> null
 }

@@ -8,6 +8,7 @@ import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.lifecycle.SavedStateHandle
@@ -170,6 +171,7 @@ class PrintTest {
             assertEquals(print.pageCount, pages(print.pdf(), "parrots"))
             assertTrue(print.smallestNumber(detail = false)!! >= Sheets.MINIMUM_NUMBER - 1e-3f)
             val meta = PaintingMeta(
+                // Titled as the PDF above is, so the preview's page and the printed one read alike.
                 id = Library.newId(), title = "Parrots", created = System.currentTimeMillis(),
                 length = PaintingLength.Relaxed.name, seed = 7, pipelineVersion = Core.pipelineVersion,
                 settings = made.settingsJson, regionCount = scene.regions.size,
@@ -180,6 +182,9 @@ class PrintTest {
         try {
             val model = PrintViewModel(app, app.library, meta.id, Paper.LETTER, SavedStateHandle())
             compose.runOnUiThread {
+                // As MainActivity draws: edge to edge, the bars' icons following the appearance
+                // (the test's plain activity otherwise keeps white icons on the light screen).
+                compose.activity.enableEdgeToEdge()
                 compose.activity.setContent { MoonlightTheme { PrintScreen(model = model, onBack = {}) } }
             }
             compose.waitUntil(30_000) {
