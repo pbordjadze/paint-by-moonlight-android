@@ -82,9 +82,10 @@ class Melody {
  * The painting's sounds, synthesized as iOS's `ToneSynth` makes them (no audio files ship): by
  * Sun a kalimba, by Moon a celesta-like bell lower and minor that twinkles where a phrase rests;
  * a wooden thock for a wrong paint; three rising notes for a finished color; a run and a chord
- * for the finished painting. Written once to the cache as WAV and played through a SoundPool as
- * sonification, quiet while the phone's ringer is silenced (iOS's ambient session keeps to the
- * silent switch).
+ * for the finished painting. Written once to the cache as WAV and played through a SoundPool
+ * as a game's sounds, so the media volume keys set them; quiet while the phone's ringer is
+ * silenced (iOS's ambient session keeps to the silent switch) and while [enabled] is off (the
+ * painting's More › Sounds, iOS's Settings › Sounds).
  */
 class Sounds(context: Context) {
     private val app = context.applicationContext
@@ -94,7 +95,7 @@ class Sounds(context: Context) {
         .setMaxStreams(10)
         .setAudioAttributes(
             AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                .setUsage(AudioAttributes.USAGE_GAME)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                 .build()
         )
@@ -103,6 +104,8 @@ class Sounds(context: Context) {
     private var released = false
     private val ids = HashMap<String, Int>()
     val melody = Melody()
+    /** The painter's Sounds setting. */
+    var enabled = true
     private var lastNote = 0L
 
     init {
@@ -111,7 +114,7 @@ class Sounds(context: Context) {
 
     /** Synthesizes what is missing from the cache and loads it; call off the main thread. */
     fun prepare() {
-        val dir = File(app.cacheDir, "sounds-v1").apply { mkdirs() }
+        val dir = File(app.cacheDir, "sounds-v$CACHE_VERSION").apply { mkdirs() }
         val voices = buildMap {
             SUN.forEachIndexed { i, f -> put("sun$i") { kalimba(f) } }
             MOON.forEachIndexed { i, f -> put("moon$i") { celesta(f) } }
@@ -139,7 +142,7 @@ class Sounds(context: Context) {
     }
 
     private fun play(name: String, volume: Float, delayMs: Long = 0) {
-        if (released || audio?.ringerMode != AudioManager.RINGER_MODE_NORMAL) return
+        if (released || !enabled || audio?.ringerMode != AudioManager.RINGER_MODE_NORMAL) return
         val id = ids[name]?.takeIf { it in loaded } ?: return
         // iOS's mixer plays everything at 0.8.
         val v = (volume * 0.8f).coerceIn(0f, 1f)
@@ -190,6 +193,8 @@ class Sounds(context: Context) {
     }
 
     private companion object {
+        /** Bump with any change to the synthesis below, so a phone's cached sounds are made again. */
+        const val CACHE_VERSION = 1
         const val RATE = 44100
         /** D major pentatonic over two octaves from D4; the Moon's the same notes as their minor, from the B below. */
         val SUN = doubleArrayOf(293.66, 329.63, 369.99, 440.00, 493.88, 587.33, 659.26, 739.99, 880.00, 987.77, 1174.66, 1318.51)

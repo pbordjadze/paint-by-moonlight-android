@@ -59,6 +59,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Undo
+import androidx.compose.material.icons.automirrored.rounded.VolumeOff
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.SelfImprovement
@@ -72,6 +74,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.Role
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -172,6 +179,7 @@ private fun Painting(
     val haptics = remember(view) { Haptics(view) }
     val context = LocalContext.current
     val sounds = remember(context) { Sounds(context) }
+    sounds.enabled = preferences.sounds
     LaunchedEffect(sounds) { withContext(Dispatchers.Default) { sounds.prepare() } }
     DisposableEffect(sounds) { onDispose { sounds.release() } }
     val density = LocalDensity.current.density
@@ -242,10 +250,7 @@ private fun Painting(
         fly { camera.travel(target, 0.55f, still) }
     }
 
-    fun flyToFit() {
-        flightJob[0]?.cancel()
-        flightJob[0] = scope.launch { camera.settle(fitting(scene.width, scene.height, inset), 0.5f, still) }
-    }
+    fun flyToFit() = fly { camera.settle(fitting(scene.width, scene.height, inset), 0.5f, still) }
 
     fun undo() {
         if (session.undo() != null) {
@@ -320,10 +325,10 @@ private fun Painting(
             if (!session.beginStroke()) return false
             flightJob[0]?.cancel()
             camera.land()
-            haptics.tick()
             stroking.finishedColor = false
             stroking.last = camera.toCanvas(at)
-            paint(stroking.last, stroking.last)
+            // The brush's tick, unless its first dab paints, which is felt as a fill.
+            if (paint(stroking.last, stroking.last).isEmpty()) haptics.tick()
             return true
         }
 
@@ -333,10 +338,11 @@ private fun Painting(
             stroking.last = b
         }
 
-        private fun paint(a: Offset, b: Offset) {
+        private fun paint(a: Offset, b: Offset): List<Tap.Painted> {
             val fills = session.drag(a.x, a.y, b.x, b.y, radius = CanvasLook.brushRadius * density / camera.scale)
             if (fills.any { it.finishedPaint }) stroking.finishedColor = true
             painted(fills)
+            return fills
         }
 
         override fun end() {
@@ -417,6 +423,19 @@ private fun Painting(
                         leadingIcon = { Icon(Icons.Rounded.Fullscreen, null) },
                         onClick = { menu = false; flyToFit() },
                     )
+                    DropdownMenuItem(
+                        text = { Text("Sounds") },
+                        leadingIcon = {
+                            Icon(if (preferences.sounds) Icons.AutoMirrored.Rounded.VolumeUp else Icons.AutoMirrored.Rounded.VolumeOff, null)
+                        },
+                        trailingIcon = { Switch(checked = preferences.sounds, onCheckedChange = null) },
+                        onClick = { preferences.sounds = !preferences.sounds },
+                        // Said as a switch, on or off; the menu stays open to show it turn.
+                        modifier = Modifier.semantics {
+                            role = Role.Switch
+                            toggleableState = ToggleableState(preferences.sounds)
+                        },
+                    )
                     if (complete) {
                         DropdownMenuItem(
                             text = { Text("Undo last area") },
@@ -448,6 +467,7 @@ private fun Painting(
                             }
                         },
                         modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
+                        still = still,
                     )
                 }
             }
@@ -495,6 +515,8 @@ private fun ZenNote(shown: Int, modifier: Modifier = Modifier) {
 /**
  * Asks for the screen's wide color gamut while the painting shows, where the screen has one,
  * so the paints are the Display P3 colors iOS shows; every other screen keeps the default.
+ * Counted per window, so two painting screens overlapping in a transition hand it over in
+ * either order and the window's own mode comes back once the last leaves.
  */
 @Composable
 private fun WideColor() {
@@ -502,19 +524,46 @@ private fun WideColor() {
     DisposableEffect(view) {
         val window = (view.context as? android.app.Activity)?.window
         val wide = view.display?.isWideColorGamut == true
-        val before = window?.colorMode
-        if (wide && window != null) window.colorMode = android.content.pm.ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT
-        onDispose { if (wide && window != null && before != null) window.colorMode = before }
+        if (wide && window != null) WideColorHolds.take(window)
+        onDispose { if (wide && window != null) WideColorHolds.give(window) }
     }
 }
 
-/** Whether the painter has turned animations off (the system's Remove animations): iOS's Reduce Motion. */
+/** The painting screens asking each window for wide color, and the mode it had before the first. */
+private object WideColorHolds {
+    private class Hold(val before: Int, var count: Int)
+    private val holds = java.util.WeakHashMap<android.view.Window, Hold>()
+
+    fun take(window: android.view.Window) {
+        val hold = holds.getOrPut(window) { Hold(window.colorMode, 0) }
+        hold.count++
+        window.colorMode = android.content.pm.ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT
+    }
+
+    fun give(window: android.view.Window) {
+        val hold = holds[window] ?: return
+        if (--hold.count > 0) return
+        holds.remove(window)
+        window.colorMode = hold.before
+    }
+}
+
+/** Whether the painter has turned animations off (the system's Remove animations): iOS's Reduce Motion. Followed live. */
 @Composable
 private fun rememberReduceMotion(): Boolean {
     val context = LocalContext.current
-    return remember(context) {
-        android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+    val resolver = context.contentResolver
+    fun read() = android.provider.Settings.Global.getFloat(resolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+    val still = remember(context) { mutableStateOf(read()) }
+    DisposableEffect(resolver) {
+        val observer = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) { still.value = read() }
+        }
+        resolver.registerContentObserver(android.provider.Settings.Global.getUriFor(android.provider.Settings.Global.ANIMATOR_DURATION_SCALE), false, observer)
+        still.value = read()
+        onDispose { resolver.unregisterContentObserver(observer) }
     }
+    return still.value
 }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)

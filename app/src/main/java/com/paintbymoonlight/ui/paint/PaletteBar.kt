@@ -86,6 +86,8 @@ fun PaletteBar(
     shake: Pair<Int, Int>?,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    /** Reduce Motion: a wrong paint's swatch doesn't shake. */
+    still: Boolean = false,
 ) {
     val scene = session.scene
     // Read so the bar recomposes when a fill finishes a paint.
@@ -125,7 +127,7 @@ fun PaletteBar(
                     total = session.total(paint),
                     held = paint == session.selected,
                     finished = session.isPaintFinished(paint),
-                    shake = shake?.takeIf { it.first == paint }?.second ?: 0,
+                    shake = if (still) 0 else shake?.takeIf { it.first == paint }?.second ?: 0,
                     metrics = metrics,
                     onClick = { onSelect(paint) },
                     modifier = Modifier.animateItem(),
