@@ -3,6 +3,7 @@ package com.paintbymoonlight.core
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.PointF
+import android.graphics.Rect
 import android.util.Log
 import com.google.android.gms.tasks.Task
 import com.google.android.gms.tasks.Tasks
@@ -157,27 +158,49 @@ internal class Findings(
             }
         }
 
-        /** Every face's box, and the most prominent face's eye contours (ML Kit gives contours for that one alone). */
+        /**
+         * Every face's box, and the most prominent face's eye contours. ML Kit finds one face
+         * alone when it is asked for contours, so one detector finds every face and another the
+         * prominent face's eyes, which go to the box that overlaps theirs most.
+         */
         private fun faces(photo: Bitmap): List<Face> {
-            val detector = FaceDetection.getClient(
-                FaceDetectorOptions.Builder()
-                    .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
-                    .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
-                    .build())
+            val image = InputImage.fromBitmap(photo, 0)
+            fun detect(contours: Int): List<com.google.mlkit.vision.face.Face> {
+                val detector = FaceDetection.getClient(
+                    FaceDetectorOptions.Builder()
+                        .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+                        .setContourMode(contours)
+                        .build())
+                try {
+                    return detector.process(image).result()
+                } finally {
+                    detector.close()
+                }
+            }
+            val boxes = detect(FaceDetectorOptions.CONTOUR_MODE_NONE).map { it.boundingBox }
+            if (boxes.isEmpty()) return emptyList()
+            val prominent = detect(FaceDetectorOptions.CONTOUR_MODE_ALL).firstOrNull()
             val w = photo.width.toFloat()
             val h = photo.height.toFloat()
             fun normalized(points: List<PointF>?) = points.orEmpty().map { PointF(it.x / w, it.y / h) }
-            try {
-                return detector.process(InputImage.fromBitmap(photo, 0)).result().map { face ->
-                    val box = face.boundingBox
-                    Face(
-                        box.left / w, box.top / h, box.width() / w, box.height() / h,
-                        normalized(face.getContour(FaceContour.LEFT_EYE)?.points),
-                        normalized(face.getContour(FaceContour.RIGHT_EYE)?.points),
-                    )
-                }
-            } finally {
-                detector.close()
+            fun overlap(a: Rect, b: Rect): Float {
+                val inside = Rect()
+                if (!inside.setIntersect(a, b)) return 0f
+                val shared = inside.width().toFloat() * inside.height()
+                return shared / (a.width().toFloat() * a.height() + b.width().toFloat() * b.height() - shared)
+            }
+            val owner = prominent?.let { face ->
+                boxes.indices.maxByOrNull { overlap(boxes[it], face.boundingBox) }
+                    ?.takeIf { overlap(boxes[it], face.boundingBox) > 0f }
+            }
+            val leftEye = normalized(prominent?.getContour(FaceContour.LEFT_EYE)?.points)
+            val rightEye = normalized(prominent?.getContour(FaceContour.RIGHT_EYE)?.points)
+            return boxes.mapIndexed { i, box ->
+                Face(
+                    box.left / w, box.top / h, box.width() / w, box.height() / h,
+                    if (i == owner) leftEye else emptyList(),
+                    if (i == owner) rightEye else emptyList(),
+                )
             }
         }
 

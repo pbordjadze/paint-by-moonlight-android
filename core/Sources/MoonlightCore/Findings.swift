@@ -234,6 +234,7 @@ extension Findings {
     /// 0.25, the subjects at 0.75, faces near 1, at 256 px on the long side. Nil when nothing was
     /// found: PaintCore then makes its own.
     public func importance(width: Int, height: Int) -> Grid<Float>? {
+        let mask = subjects
         guard mask != nil || !faces.isEmpty else { return nil }
         let aspect = Double(width) / Double(height)
         let w = aspect >= 1 ? 256 : max(1, Int(256 * aspect)), h = aspect >= 1 ? max(1, Int(256 / aspect)) : 256
@@ -258,7 +259,16 @@ extension Findings {
         return map
     }
 
-    /// The mask box-sampled to `w` × `h`, 0...1.
+    /// The mask when it holds a subject: some pixel at least half confident. ML Kit's segmenter
+    /// always answers with a soft mask, where Vision finds a subject or none, so a landscape's
+    /// faint confidence must not become a subject.
+    var subjects: Mask? {
+        guard let mask, mask.values.contains(where: { $0 >= 128 }) else { return nil }
+        return mask
+    }
+
+    /// The mask box-sampled to `w` × `h`, 0...1. Not stretched to its peak as iOS stretches a
+    /// faint saliency map: a subject's mask is confident, and `subjects` leaves out a faint one.
     static func boxSampled(_ mask: Mask, width w: Int, height h: Int) -> [Float] {
         let bw = mask.width, bh = mask.height
         var out = [Float](repeating: 0, count: w * h)
@@ -273,9 +283,6 @@ extension Findings {
                 out[y * w + x] = Float(sum) / Float(255 * (y1 - y0) * (x1 - x0))
             }
         }
-        // As iOS samples Vision's maps: a faint one is stretched to its peak.
-        let peak = out.max() ?? 0
-        if peak > 1e-6 && peak < 0.5 { out = out.map { $0 / peak } }
         return out
     }
 
@@ -283,7 +290,7 @@ extension Findings {
     /// each pixel inside when the mean of those it covers is at least half, traced by
     /// `MaskContours`.
     public var objects: [[SIMD2<Float>]] {
-        guard let mask, mask.values.contains(where: { $0 >= 128 }) else { return [] }
+        guard let mask = subjects else { return [] }
         let w = mask.width, h = mask.height
         let scale = 384 / Double(max(w, h))
         let ow = max(1, min(w, Int((Double(w) * scale).rounded()))), oh = max(1, min(h, Int((Double(h) * scale).rounded())))

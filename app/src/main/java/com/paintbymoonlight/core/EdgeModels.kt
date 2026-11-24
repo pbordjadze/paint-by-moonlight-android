@@ -26,10 +26,15 @@ internal class EdgeModels(private val assets: AssetManager) {
         Drawing(1, "models/lineart.tflite"),
     }
 
-    @Volatile private var running: Interpreter? = null
-    @Volatile private var cancelled = false
+    /**
+     * Guards [running] and [cancelled]: [cancel] must never reach an interpreter being closed,
+     * whose cancellation flag is freed with it, so the interpreter is closed under the lock.
+     */
+    private val lock = Any()
+    private var running: Interpreter? = null
+    private var cancelled = false
 
-    fun cancel() {
+    fun cancel() = synchronized(lock) {
         cancelled = true
         running?.setCancelled(true)
     }
@@ -42,24 +47,31 @@ internal class EdgeModels(private val assets: AssetManager) {
         val options = Interpreter.Options()
             .setNumThreads(Runtime.getRuntime().availableProcessors().coerceIn(1, 4))
             .setCancellable(true)
-        Interpreter(load(model), options).use { interpreter ->
+        val interpreter = Interpreter(load(model), options)
+        synchronized(lock) {
+            if (cancelled) {
+                interpreter.close()
+                throw kotlinx.coroutines.CancellationException("cancelled")
+            }
             running = interpreter
-            try {
-                if (cancelled) throw kotlinx.coroutines.CancellationException("cancelled")
-                interpreter.resizeInput(0, intArrayOf(1, paddedHeight, paddedWidth, 3))
-                interpreter.allocateTensors()
-                val shapes = (0 until interpreter.outputTensorCount).map { interpreter.getOutputTensor(it).shape() }
-                // Each output is [1, height, width, 1].
-                val outputs = shapes.map { FloatBuffer.allocate(it[1] * it[2]) }
-                interpreter.runForMultipleInputsOutputs(arrayOf(FloatBuffer.wrap(input)), outputs.indices.associateWith { outputs[it] })
-                val dims = IntArray(shapes.size * 2) { shapes[it / 2][1 + it % 2] }
-                val levels = NativeCore.modelMap(model.code, outputs.map { it.array() }.toTypedArray(), dims, size)
-                return LineMap(w, h, levels)
-            } catch (e: IllegalArgumentException) {
-                // LiteRT reports a run stopped by setCancelled as an IllegalArgumentException.
-                if (cancelled) throw kotlinx.coroutines.CancellationException("cancelled") else throw e
-            } finally {
+        }
+        try {
+            interpreter.resizeInput(0, intArrayOf(1, paddedHeight, paddedWidth, 3))
+            interpreter.allocateTensors()
+            val shapes = (0 until interpreter.outputTensorCount).map { interpreter.getOutputTensor(it).shape() }
+            // Each output is [1, height, width, 1].
+            val outputs = shapes.map { FloatBuffer.allocate(it[1] * it[2]) }
+            interpreter.runForMultipleInputsOutputs(arrayOf(FloatBuffer.wrap(input)), outputs.indices.associateWith { outputs[it] })
+            val dims = IntArray(shapes.size * 2) { shapes[it / 2][1 + it % 2] }
+            val levels = NativeCore.modelMap(model.code, outputs.map { it.array() }.toTypedArray(), dims, size)
+            return LineMap(w, h, levels)
+        } catch (e: IllegalArgumentException) {
+            // LiteRT reports a run stopped by setCancelled as an IllegalArgumentException.
+            if (synchronized(lock) { cancelled }) throw kotlinx.coroutines.CancellationException("cancelled") else throw e
+        } finally {
+            synchronized(lock) {
                 running = null
+                interpreter.close()
             }
         }
     }
