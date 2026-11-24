@@ -136,7 +136,8 @@ class AppTour {
      * can't take one.
      */
     private fun capture(name: String) {
-        Thread.sleep(300)
+        // A moment for the screen to show the frame the app just drew.
+        Thread.sleep(600)
         save(name, instrumentation.uiAutomation.takeScreenshot() ?: compose.onRoot().captureToImage().asAndroidBitmap())
     }
 
@@ -190,7 +191,6 @@ class AppTour {
         shoot("02-create")
         compose.onNode(hasText("Start painting")).performClick()
         waitFor(hasText("Mixing your paints", substring = true), 5_000)
-        Thread.sleep(600)
         capture("03-making")
         compose.runOnUiThread { model.cancel() }
         // Had it finished first, the gallery's shots would show it too.
