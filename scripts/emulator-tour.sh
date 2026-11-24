@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Runs on a booted emulator or device (adb): first the core's probe (build/core/<abi>/, from
-# scripts/build-core.sh) on a photo, printing the template's hash beside the host's, then the
-# app's tour (AppTour), and pulls its screenshots and log into the output directory.
+# scripts/build-core.sh) on a photo, twice, then the app's tour (AppTour), and pulls its
+# screenshots and log into the output directory. The two runs must make the same bytes, and the
+# painting must be the host's (settings, areas, paints, sizes, valid). Its bytes may differ from
+# the host's: Bionic's libm rounds some functions differently from glibc's (as Darwin's does),
+# so a last bit moves a point, which is why the hash is reported, not required.
 #
-#   scripts/emulator-tour.sh <photo.ppm> <out-dir> [expected-hash]
+#   scripts/emulator-tour.sh <photo.ppm> <out-dir> [host-probe.txt]
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PHOTO="$1"; OUT="$2"; EXPECTED="${3:-}"
+PHOTO="$1"; OUT="$2"; HOST="${3:-}"
 PKG=com.pbordjadze.paintbymoonlight
 mkdir -p "$OUT"
 abi="$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
@@ -16,10 +19,15 @@ echo "device ABI: $abi"
 adb shell rm -rf /data/local/tmp/core
 adb push "$ROOT/build/core/$abi" /data/local/tmp/core >/dev/null
 adb push "$PHOTO" /data/local/tmp/core/photo.ppm >/dev/null
-adb shell "cd /data/local/tmp/core && chmod +x moonlight-probe && LD_LIBRARY_PATH=. ./moonlight-probe photo.ppm relaxed" | tee "$OUT/probe.txt"
-hash="$(sed -n 's/^hash //p' "$OUT/probe.txt" | tr -d '\r')"
-if [[ -n "$EXPECTED" ]]; then
-  if [[ "$hash" == "$EXPECTED" ]]; then echo "same template as the host: $hash"; else echo "::error::template differs from the host's ($hash vs $EXPECTED)"; exit 1; fi
+probe() { adb shell "cd /data/local/tmp/core && chmod +x moonlight-probe && LD_LIBRARY_PATH=. ./moonlight-probe photo.ppm relaxed" | tr -d '\r'; }
+probe | tee "$OUT/probe.txt"
+again="$(probe | sed -n 's/^hash //p')"
+hash="$(sed -n 's/^hash //p' "$OUT/probe.txt")"
+if [[ "$hash" != "$again" ]]; then echo "::error::the core made different bytes twice ($hash, $again)"; exit 1; fi
+if [[ -n "$HOST" ]]; then
+  painting() { grep -E '^(photo|settings|template|scene|valid) ' "$1"; }
+  if ! diff <(painting "$HOST") <(painting "$OUT/probe.txt"); then echo "::error::the painting differs from the host's"; exit 1; fi
+  echo "same painting as the host; bytes: $hash here, $(sed -n 's/^hash //p' "$HOST") on the host"
 fi
 
 # 2. The app.

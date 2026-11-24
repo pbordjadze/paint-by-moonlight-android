@@ -1,6 +1,6 @@
 # Builds the native core (Swift 6.4.3 + its Android SDK) for arm64-v8a and x86_64, the app,
-# and on an x86_64 emulator runs the core's probe (whose template must match the host's, byte
-# for byte) and the app's tour (AppTour), keeping its screenshots as the run's artifact.
+# and on an x86_64 emulator runs the core's probe (the same painting as the host's: see
+# scripts/emulator-tour.sh) and the app's tour (AppTour), keeping its screenshots as the run's artifact.
 name: Android
 
 on:
@@ -87,7 +87,6 @@ jobs:
           python3 -c "from PIL import Image; Image.open('paint-by-number/Tests/Corpus/parrots.jpg').convert('RGB').save('parrots.ppm')"
           (cd core && swift build -c release --product moonlight-probe --scratch-path ../build/swift/host)
           build/swift/host/release/moonlight-probe parrots.ppm relaxed | tee host-probe.txt
-          echo "hash=$(sed -n 's/^hash //p' host-probe.txt)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-java@v4
         with:
@@ -114,7 +113,7 @@ jobs:
           profile: pixel_7
           disable-animations: false
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: scripts/emulator-tour.sh parrots.ppm out ${{ steps.host.outputs.hash }}
+          script: scripts/emulator-tour.sh parrots.ppm out host-probe.txt
 
       - name: Keep the APK, the screenshots and the logs
         if: always()
