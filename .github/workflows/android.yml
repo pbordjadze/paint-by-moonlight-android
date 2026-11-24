@@ -1,0 +1,124 @@
+# Builds the native core (Swift 6.4.3 + its Android SDK) for arm64-v8a and x86_64, the app,
+# and on an x86_64 emulator runs the core's probe (whose template must match the host's, byte
+# for byte) and the app's tour (AppTour), keeping its screenshots as the run's artifact.
+name: Android
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SWIFT_VERSION: 6.4.3
+  SWIFT_ANDROID_SDK_CHECKSUM: a78839edf4ec161e03b9f1e22a0ef94e565ece3f3ce5c03e3c79246c6b71f0a9
+  NDK_VERSION: r29
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: PaintCore's revision
+        id: core
+        run: echo "rev=$(sed -n 's/.*revision: "\([0-9a-f]*\)".*/\1/p' core/Package.swift)" >> "$GITHUB_OUTPUT"
+
+      # PaintCore from its own checkout (MOONLIGHT_PAINTCORE_PATH), at the pinned revision: the
+      # same code SwiftPM would fetch, and its corpus photos for the probe.
+      - uses: actions/checkout@v4
+        with:
+          repository: pbordjadze/paint-by-number
+          ref: ${{ steps.core.outputs.rev }}
+          path: paint-by-number
+          sparse-checkout: |
+            Package.swift
+            Sources
+            Tests/Corpus
+
+      - name: Cache toolchains
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/toolchains
+            ~/.swiftpm/swift-sdks
+          key: toolchains-swift-${{ env.SWIFT_VERSION }}-ndk-${{ env.NDK_VERSION }}
+
+      - name: Install Swift, its Android SDK and the NDK
+        run: |
+          set -euo pipefail
+          mkdir -p ~/toolchains && cd ~/toolchains
+          if [ ! -d swift ]; then
+            curl -fsSL -o swift.tar.gz "https://download.swift.org/swift-${SWIFT_VERSION}-release/ubuntu2404/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE-ubuntu24.04.tar.gz"
+            mkdir swift && tar xzf swift.tar.gz -C swift --strip-components=1 && rm swift.tar.gz
+          fi
+          if [ ! -d "android-ndk-${NDK_VERSION}" ]; then
+            curl -fsSL -o ndk.zip "https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip"
+            unzip -q ndk.zip && rm ndk.zip
+          fi
+          echo "$HOME/toolchains/swift/usr/bin" >> "$GITHUB_PATH"
+          echo "ANDROID_NDK_HOME=$HOME/toolchains/android-ndk-${NDK_VERSION}" >> "$GITHUB_ENV"
+          export PATH="$HOME/toolchains/swift/usr/bin:$PATH"
+          if ! swift sdk list | grep -q _android; then
+            swift sdk install "https://download.swift.org/swift-${SWIFT_VERSION}-release/android-sdk/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE_android.artifactbundle.tar.gz" --checksum "$SWIFT_ANDROID_SDK_CHECKSUM"
+          fi
+          ANDROID_NDK_HOME="$HOME/toolchains/android-ndk-${NDK_VERSION}" bash ~/.swiftpm/swift-sdks/swift-${SWIFT_VERSION}-RELEASE_android.artifactbundle/swift-android/scripts/setup-android-sdk.sh
+          swift --version
+
+      - name: Build the core for Android
+        env:
+          MOONLIGHT_PAINTCORE_PATH: ${{ github.workspace }}/paint-by-number
+        run: scripts/build-core.sh release arm64-v8a x86_64
+
+      - name: The probe on the host
+        id: host
+        env:
+          MOONLIGHT_PAINTCORE_PATH: ${{ github.workspace }}/paint-by-number
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pillow
+          python3 -c "from PIL import Image; Image.open('paint-by-number/Tests/Corpus/parrots.jpg').convert('RGB').save('parrots.ppm')"
+          (cd core && swift build -c release --product moonlight-probe --scratch-path ../build/swift/host)
+          build/swift/host/release/moonlight-probe parrots.ppm relaxed | tee host-probe.txt
+          echo "hash=$(sed -n 's/^hash //p' host-probe.txt)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build the app
+        run: ./gradlew --console=plain assembleDebug assembleDebugAndroidTest
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: The probe and the app on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_7
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: scripts/emulator-tour.sh parrots.ppm out ${{ steps.host.outputs.hash }}
+
+      - name: Keep the APK, the screenshots and the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ github.sha }}
+          path: |
+            out/
+            host-probe.txt
+            app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: warn
