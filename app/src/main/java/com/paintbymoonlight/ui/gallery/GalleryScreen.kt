@@ -93,7 +93,7 @@ fun GalleryScreen(
     onNew: () -> Unit,
     onOpen: (String) -> Unit,
     onShare: (String) -> Unit,
-    onPrint: ((String) -> Unit)?,
+    onPrintPages: (String) -> Unit,
     onRename: (String, String) -> Unit,
     onDelete: (String) -> Unit,
 ) {
@@ -146,7 +146,7 @@ fun GalleryScreen(
                         onOpen = { onOpen(meta.id) },
                         onShare = { onShare(meta.id) },
                         onSend = { sending = meta },
-                        onPrint = onPrint?.let { print -> { print(meta.id) } },
+                        onPrintPages = { onPrintPages(meta.id) },
                         onRename = { renaming = meta },
                         onDelete = { deleting = meta },
                         modifier = Modifier.animateItem(),
@@ -217,7 +217,7 @@ private fun PaintingCard(
     onOpen: () -> Unit,
     onShare: () -> Unit,
     onSend: () -> Unit,
-    onPrint: (() -> Unit)?,
+    onPrintPages: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
@@ -283,15 +283,14 @@ private fun PaintingCard(
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Rounded.Edit, null) }, onClick = { menu = false; onRename() })
             DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Rounded.Share, null) }, onClick = { menu = false; onShare() })
+            // One Big Sheet is offered inside Print, as on iOS: one way to print per menu.
+            DropdownMenuItem(text = { Text("Print…") }, leadingIcon = { Icon(Icons.Rounded.Print, null) }, onClick = { menu = false; onPrintPages() })
             // Paint by Moonlight, on either platform, opens it as a new painting, blank.
             DropdownMenuItem(
                 text = { Text("Send Template…") },
                 leadingIcon = { Icon(Icons.AutoMirrored.Rounded.Send, null) },
                 onClick = { menu = false; onSend() },
             )
-            if (onPrint != null) {
-                DropdownMenuItem(text = { Text("Print it big") }, leadingIcon = { Icon(Icons.Rounded.Print, null) }, onClick = { menu = false; onPrint() })
-            }
             DropdownMenuItem(
                 text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
                 leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.error) },

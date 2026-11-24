@@ -23,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -34,6 +35,9 @@ import com.paintbymoonlight.data.Thumbnails
 import com.paintbymoonlight.outside.Links
 import com.paintbymoonlight.print.BigSheetScreen
 import com.paintbymoonlight.print.BigSheetViewModel
+import com.paintbymoonlight.print.Paper
+import com.paintbymoonlight.print.PrintScreen
+import com.paintbymoonlight.print.PrintViewModel
 import com.paintbymoonlight.ui.LocalDestinationTransition
 import com.paintbymoonlight.ui.LocalSharedTransition
 import com.paintbymoonlight.ui.create.CreateScreen
@@ -73,8 +77,10 @@ private object Routes {
     const val PAINT = "paint/{id}"
     const val NEW = "new"
     const val PRINT = "print/{id}"
+    const val PAGES = "pages/{id}"
     fun paint(id: String) = "paint/$id"
     fun print(id: String) = "print/$id"
+    fun pages(id: String) = "pages/$id"
 }
 
 @Composable
@@ -110,7 +116,7 @@ private fun MoonlightNav(app: MoonlightApp, opened: Uri?) {
                             onNew = { gate.start { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) } },
                             onOpen = { nav.navigate(Routes.paint(it)) },
                             onShare = share,
-                            onPrint = { id -> nav.navigate(Routes.print(id)) },
+                            onPrintPages = { id -> nav.navigate(Routes.pages(id)) },
                             onRename = { id, title -> scope.launch { library.rename(id, title) } },
                             onDelete = { id -> scope.launch { library.delete(id) } },
                         )
@@ -156,6 +162,7 @@ private fun MoonlightNav(app: MoonlightApp, opened: Uri?) {
                                     nav.navigate(Routes.print(id))
                                 }
                             },
+                            onPrintPages = { nav.navigate(Routes.pages(id)) },
                         )
                     }
                 }
@@ -163,6 +170,12 @@ private fun MoonlightNav(app: MoonlightApp, opened: Uri?) {
                     val id = entry.arguments?.getString("id") ?: return@composable
                     val model = viewModel { BigSheetViewModel(library, id) }
                     BigSheetScreen(model = model, onBack = { nav.popBackStack() })
+                }
+                composable(Routes.PAGES) { entry ->
+                    val id = entry.arguments?.getString("id") ?: return@composable
+                    val paper = Paper.forCountry(context.resources.configuration.locales[0]?.country)
+                    val model = viewModel { PrintViewModel(app, library, id, paper, createSavedStateHandle()) }
+                    PrintScreen(model = model, onBack = { nav.popBackStack() }, onBigSheet = { nav.navigate(Routes.print(id)) })
                 }
             }
         }

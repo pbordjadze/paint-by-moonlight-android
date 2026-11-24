@@ -140,9 +140,10 @@ object SharedPaintings {
 
     /**
      * The title as a file's name: letters, digits and a little punctuation, at most
-     * [MAX_NAME_BYTES] of UTF-8 so " Template.moonlight" still fits in a file system's 255 bytes.
+     * [MAX_NAME_BYTES] of UTF-8 so " Template.moonlight" (or Print's " Template.pdf") still fits
+     * in a file system's 255 bytes.
      */
-    private fun fileName(title: String): String {
+    fun fileName(title: String): String {
         val cleaned = title.replace(Regex("[^\\p{L}\\p{N} ._-]"), "").trim()
         val name = StringBuilder()
         var bytes = 0

@@ -55,6 +55,9 @@ class Scene(
     val labels: List<Label>,
     /** Line art drawn inside areas, as one path. */
     val strokes: Path,
+    /** [lines] and [strokes] as their polylines (flat x, y), for drawing only the part a printed sheet shows. */
+    val linePolylines: List<FloatArray> = emptyList(),
+    val strokePolylines: List<FloatArray> = emptyList(),
 ) {
     /** Areas of each paint, by paint index. */
     val regionsByPaint: List<IntArray> by lazy {
@@ -111,14 +114,14 @@ class Scene(
             }
 
             val lines = Path()
-            repeat(b.count()) { lines.addPolyline(b.points()) }
+            val linePolylines = List(b.count()) { b.points().also { lines.addPolyline(it) } }
 
             val labels = List(b.count()) { Label(b.float, b.float, b.float, b.int) }
 
             val strokes = Path()
-            repeat(b.count()) { strokes.addPolyline(b.points()) }
+            val strokePolylines = List(b.count()) { b.points().also { strokes.addPolyline(it) } }
 
-            return Scene(width, height, paints, regions, lines, labels, strokes)
+            return Scene(width, height, paints, regions, lines, labels, strokes, linePolylines, strokePolylines)
         }
 
         private fun ByteBuffer.count(): Int {
