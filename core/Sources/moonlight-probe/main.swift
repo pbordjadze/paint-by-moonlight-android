@@ -2,8 +2,12 @@
 //
 // Makes a painting from a PPM photo exactly as the Android app does (Engine.make) and prints
 // what it made and the FNV-1a hash of the encoded template. Run on Linux and on an Android
-// emulator (adb shell): the same hash means Android makes the same template.
+// emulator (adb shell): scripts/emulator-tour.sh compares the two.
+#if canImport(FoundationEssentials) && !canImport(Darwin)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import MoonlightCore
 import PaintCore
 
@@ -14,7 +18,8 @@ if let i = args.firstIndex(of: "--out"), i + 1 < args.count {
     args.removeSubrange(i...(i + 1))
 }
 guard let path = args.first, let data = FileManager.default.contents(atPath: path) else {
-    FileHandle.standardError.write(Data("usage: moonlight-probe <photo.ppm> [quick|relaxed|detailed] [--out t.pbnt]\n".utf8))
+    let usage = "usage: moonlight-probe <photo.ppm> [quick|relaxed|detailed] [--out t.pbnt]\n"
+    _ = usage.withCString { write(2, $0, strlen($0)) }
     exit(2)
 }
 let length = args.count > 1 ? PaintingLength(rawValue: args[1]) ?? .relaxed : .relaxed
@@ -32,7 +37,7 @@ print("""
     template \(made.template.width)x\(made.template.height), \(made.template.regions.count) areas, \(made.template.palette.count) paints, \(bytes.count) bytes
     scene \(scene.count) bytes
     valid \(made.template.validate().isValid)
-    seconds \(String(format: "%.2f", seconds))
+    seconds \((seconds * 100).rounded() / 100)
     hash \(String(hash, radix: 16))
     """)
 if let outPath { _ = FileManager.default.createFile(atPath: outPath, contents: Data(bytes)) }

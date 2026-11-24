@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials) && !canImport(Darwin)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import PaintCore
 
 // The C ABI the JNI glue (CMoonlightJNI) calls. Buffers handed out are malloc'd and freed with

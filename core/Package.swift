@@ -9,7 +9,7 @@ import PackageDescription
 // for a dependency pinned to a revision or branch. MOONLIGHT_PAINTCORE_PATH builds against a local
 // checkout instead (a change to the core tried on Android before it lands).
 let paintCore: Package.Dependency = Context.environment["MOONLIGHT_PAINTCORE_PATH"].map { .package(path: $0) }
-    ?? .package(url: "https://github.com/pbordjadze/paint-by-number.git", revision: "2830278efc0bc122b49d1b72f7150513d120af22")
+    ?? .package(url: "https://github.com/pbordjadze/paint-by-number.git", revision: "b69c4bb4fe0c64eb4d2624d37ca4a848fc5bb051")
 
 let package = Package(
     name: "MoonlightCore",
