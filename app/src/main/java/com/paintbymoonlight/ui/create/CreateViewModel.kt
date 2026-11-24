@@ -46,6 +46,9 @@ class CreateViewModel(
 ) : ViewModel() {
     var photo by mutableStateOf<Bitmap?>(null)
         private set
+    /** A small first read of the picture, shown while the full one is decoded. */
+    var preview by mutableStateOf<Bitmap?>(null)
+        private set
     /** A picture that isn't the painter's own: its title, and its maker and date under it. */
     var credit by mutableStateOf<Pair<String, String>?>(null)
         private set
@@ -75,6 +78,9 @@ class CreateViewModel(
                 }
                 picked is Picked.Museum -> title = picked.title
             }
+            preview = runCatching { withContext(Dispatchers.IO) { decode(sample, PREVIEW_SIDE) } }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull()
             photo = runCatching { withContext(Dispatchers.IO) { decode(sample) } }
                 .onFailure {
                     if (it is CancellationException) throw it
@@ -95,13 +101,13 @@ class CreateViewModel(
         is Picked.Museum -> ImageDecoder.createSource(Unreleased.museumPicture(context, picked.image))
     }
 
-    /** The picture upright (ImageDecoder applies its orientation), at most 2048 px on its long side: more than the pipeline's working size. */
-    private suspend fun decode(sample: Sample?): Bitmap {
+    /** The picture upright (ImageDecoder applies its orientation), at most [maxSide] px on its long side: by default more than the pipeline's working size. */
+    private suspend fun decode(sample: Sample?, maxSide: Int = MAX_SIDE): Bitmap {
         val source = source(sample)
         return ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
             val long = max(info.size.width, info.size.height)
-            if (long > MAX_SIDE) {
-                val k = MAX_SIDE.toFloat() / long
+            if (long > maxSide) {
+                val k = maxSide.toFloat() / long
                 decoder.setTargetSize((info.size.width * k).toInt().coerceAtLeast(1), (info.size.height * k).toInt().coerceAtLeast(1))
             }
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
@@ -161,5 +167,6 @@ class CreateViewModel(
 
     private companion object {
         const val MAX_SIDE = 2048
+        const val PREVIEW_SIDE = 480
     }
 }
