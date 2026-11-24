@@ -185,11 +185,12 @@ class AppTour {
         // Paused, so the shot lands mid-pulse rather than after it.
         compose.mainClock.autoAdvance = false
         compose.onNode(hasContentDescription("Hint: find the next area")).performClick()
-        compose.mainClock.advanceTimeBy(1_000)
+        // The flight lands in 0.55 s and the area's first beat peaks 0.4 + 0.33 s in.
+        compose.mainClock.advanceTimeBy(750)
         capture("07-hint")
         compose.mainClock.autoAdvance = true
         compose.onNode(hasContentDescription("More")).performClick()
-        waitFor(hasText("Whole painting"), 5_000)
+        waitFor(hasText("Fit to Screen"), 5_000)
         shoot("08-more-menu")
     }
 

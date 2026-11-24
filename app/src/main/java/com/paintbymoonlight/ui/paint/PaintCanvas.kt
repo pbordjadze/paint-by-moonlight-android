@@ -64,7 +64,7 @@ import kotlin.math.sin
 @Stable
 class CanvasMotion {
     var frame by mutableLongStateOf(0L)
-        internal set
+        private set
     internal var wake by mutableIntStateOf(0)
         private set
     internal var activeUntil = 0L
@@ -72,46 +72,63 @@ class CanvasMotion {
     /** Under Reduce Motion: nothing spreads, glides, pops or shines. */
     var still = false
 
-    internal class Spread(val region: Int, val x: Float, val y: Float, val start: Long, val seconds: Float, val radius: Float, val painted: Boolean)
-    internal class Sparkle(val x: Float, val y: Float, val size: Float, val start: Long)
+    /**
+     * When something began: stamped with the first frame after it was asked for, on the frame
+     * clock (so a paused test clock pauses it too), [delay] seconds on. Until stamped it reads
+     * as just beginning.
+     */
+    internal class Moment(private val delay: Float) {
+        var start: Long? = null
+        fun since(frame: Long) = (start?.let { (frame - it) / 1e9f } ?: 0f) - delay
+    }
 
+    internal class Spread(val region: Int, val x: Float, val y: Float, val at: Moment, val seconds: Float, val radius: Float, val painted: Boolean)
+    internal class Sparkle(val x: Float, val y: Float, val size: Float, val at: Moment)
+
+    private val unstamped = ArrayList<Pair<Moment, Float>>()
     internal val spreads = ArrayList<Spread>()
     internal val sparkles = ArrayList<Sparkle>()
-    internal var selectionAt = Long.MIN_VALUE
+    internal var selectionAt: Moment? = null
     internal var bumpRegion = -1
-    internal var bumpAt = 0L
+    internal var bumpAt: Moment? = null
     internal var pulseRegion = -1
-    internal var pulseAt = 0L
+    internal var pulseAt: Moment? = null
     /** The paint a gloss sweeps (-1: the whole painting), or none. */
     internal var shinePaint: Int? = null
-    internal var shineAt = 0L
-    internal var lastSparkles = 0L
+    internal var shineAt: Moment? = null
+    internal var lastSparkles: Moment? = null
 
-    internal fun keep(until: Long) {
-        activeUntil = max(activeUntil, until)
+    /** Something begins [delay] seconds from now, and frames keep coming [lasts] seconds after that. */
+    internal fun moment(delay: Float = 0f, lasts: Float): Moment {
+        val m = Moment(delay)
+        unstamped.add(m to delay + lasts)
         wake++
+        return m
     }
+
+    /** A frame at [t]: stamps what began since the last. */
+    internal fun tick(t: Long) {
+        for ((m, lasts) in unstamped) {
+            m.start = t
+            activeUntil = max(activeUntil, t + (lasts * 1e9f).toLong())
+        }
+        unstamped.clear()
+        frame = t
+    }
+
+    internal fun since(m: Moment?) = m?.since(frame) ?: Float.MAX_VALUE
 
     /** Beats the hint on [region], starting [delay] seconds from now. */
     fun pulse(region: Int, delay: Float) {
         pulseRegion = region
-        pulseAt = now() + seconds(if (still) 0f else delay)
-        keep(pulseAt + seconds(2.1f))
+        pulseAt = moment(if (still) 0f else delay, lasts = 2.1f)
     }
 
     /** Sweeps a gloss over [paint]'s areas (-1: all of them) after [delay] seconds. */
     fun shine(paint: Int, delay: Float) {
         if (still) return
         shinePaint = paint
-        shineAt = now() + seconds(delay)
-        keep(shineAt + seconds(CanvasLook.shineSeconds + 0.1f))
-    }
-
-    internal fun since(t: Long) = (frame - t) / 1e9f
-
-    companion object {
-        internal fun now() = System.nanoTime()
-        internal fun seconds(s: Float) = (s * 1e9f).toLong()
+        shineAt = moment(delay, lasts = CanvasLook.shineSeconds + 0.1f)
     }
 }
 
@@ -197,20 +214,18 @@ fun PaintCanvas(
     LaunchedEffect(motion.wake) {
         while (true) {
             val t = withFrameNanos { it }
-            motion.frame = t
+            motion.tick(t)
             if (t > motion.activeUntil) break
         }
     }
 
     // A new pick glides its hatch in.
     LaunchedEffect(session.selected) {
-        motion.selectionAt = if (motion.still) Long.MIN_VALUE else CanvasMotion.now()
-        motion.keep(CanvasMotion.now() + CanvasMotion.seconds(2.5f))
+        motion.selectionAt = if (motion.still) null else motion.moment(lasts = 2.5f)
     }
 
     DisposableEffect(session, motion) {
         val stop = session.listen { event ->
-            val now = CanvasMotion.now()
             when (event) {
                 is PaintEvent.Painted -> {
                     val region = scene.regions[event.region]
@@ -224,26 +239,25 @@ fun PaintCanvas(
                         if (event.finishedPainting) CanvasLook.lastFillSlowdown else 1f
                     motion.spreads.removeAll { it.region == event.region }
                     if (!motion.still) {
-                        motion.spreads.add(CanvasMotion.Spread(event.region, event.x, event.y, now, seconds, radius, true))
-                        if (!event.finishedPainting) popSparkles(motion, scene, camera, density, event.region, seconds, now)
+                        val at = motion.moment(lasts = seconds + CanvasLook.wetSettle + 0.1f)
+                        motion.spreads.add(CanvasMotion.Spread(event.region, event.x, event.y, at, seconds, radius, true))
+                        if (!event.finishedPainting) popSparkles(motion, scene, camera, density, event.region, seconds)
                     }
                     if (event.finishedPaint && !event.finishedPainting) {
                         motion.shine(region.paint, seconds + CanvasLook.shineDelay)
                     }
-                    motion.keep(now + CanvasMotion.seconds(seconds + CanvasLook.wetSettle + 0.1f))
                 }
                 is PaintEvent.Undone -> {
                     motion.spreads.removeAll { it.region == event.region }
                     if (!motion.still) {
-                        motion.spreads.add(CanvasMotion.Spread(event.region, 0f, 0f, now, CanvasLook.unpaintSeconds, 0f, false))
+                        val at = motion.moment(lasts = CanvasLook.unpaintSeconds + 0.05f)
+                        motion.spreads.add(CanvasMotion.Spread(event.region, 0f, 0f, at, CanvasLook.unpaintSeconds, 0f, false))
                     }
-                    if (motion.shinePaint != null) motion.shinePaint = null
-                    motion.keep(now + CanvasMotion.seconds(CanvasLook.unpaintSeconds + 0.05f))
+                    motion.shinePaint = null
                 }
                 is PaintEvent.Rejected -> {
                     motion.bumpRegion = event.region
-                    motion.bumpAt = now
-                    motion.keep(now + CanvasMotion.seconds(CanvasLook.bumpSeconds + 0.1f))
+                    motion.bumpAt = motion.moment(lasts = CanvasLook.bumpSeconds + 0.1f)
                 }
             }
         }
@@ -306,11 +320,10 @@ fun PaintCanvas(
                 )
             }
     ) {
-        val now = motion.frame
-        motion.spreads.removeAll { motion.since(it.start) > it.seconds + if (it.painted) CanvasLook.wetSettle else 0f }
+        motion.spreads.removeAll { motion.since(it.at) > it.seconds + if (it.painted) CanvasLook.wetSettle else 0f }
         val scale = camera.scale
         val depth = camera.depth
-        val spreading = motion.spreads.filter { motion.since(it.start) < it.seconds }.map { it.region }.toSet()
+        val spreading = motion.spreads.filter { motion.since(it.at) < it.seconds }.map { it.region }.toSet()
         if (recorded.changes != session.changes || recorded.excluding != spreading) {
             recordFills(node, session, paints, spreading, fill)
             recorded.changes = session.changes
@@ -347,7 +360,7 @@ fun PaintCanvas(
                     }
                     recorded.tintKey = key
                 }
-                val since = if (motion.selectionAt == Long.MIN_VALUE) 10f else motion.since(motion.selectionAt).coerceAtLeast(0f)
+                val since = motion.selectionAt?.let { motion.since(it).coerceAtLeast(0f) } ?: 10f
                 val paint = paints[held]
                 fill.setColor(CanvasLook.tint(paint, since).pack())
                 canvas.drawPath(recorded.tint, fill)
@@ -369,7 +382,7 @@ fun PaintCanvas(
             for (s in motion.spreads) {
                 val region = scene.regions[s.region]
                 val color = paints[region.paint]
-                val t = motion.since(s.start) / s.seconds
+                val t = motion.since(s.at) / s.seconds
                 if (!s.painted) {
                     if (t >= 1f) continue
                     fill.setColor(color.pack(1 - smoothstep(0f, 1f, t)))
@@ -377,7 +390,7 @@ fun PaintCanvas(
                     continue
                 }
                 if (t >= 1f) {
-                    val settle = ((motion.since(s.start) - s.seconds) / CanvasLook.wetSettle).coerceIn(0f, 1f)
+                    val settle = ((motion.since(s.at) - s.seconds) / CanvasLook.wetSettle).coerceIn(0f, 1f)
                     val wet = (1 - settle) * (1 - settle)
                     if (wet <= 0f) continue
                     fill.setColor((color * (1 - 0.12f * wet)).pack())
@@ -517,9 +530,9 @@ fun PaintCanvas(
 
             // The fill's two gold sparkles, in the view's space as iOS lays them.
             val gold = Moonlight.gold
-            motion.sparkles.removeAll { (now - it.start) / 1e9f > 0.75f }
+            motion.sparkles.removeAll { motion.since(it.at) > 0.75f }
             for (s in motion.sparkles) {
-                val t = (now - s.start) / 1e9f / 0.7f
+                val t = motion.since(s.at) / 0.7f
                 if (t < 0f || t > 1f) continue
                 val grow = if (t < 0.35f) 0.2f + (1.15f - 0.2f) * t / 0.35f else 1.15f + (0.85f - 1.15f) * (t - 0.35f) / 0.65f
                 val opacity = when {
@@ -544,7 +557,7 @@ private fun paintCoverage(session: PaintSession, motion: CanvasMotion, region: I
     val s = motion.spreads.lastOrNull { it.region == region }
     val painted = session.progress.isPainted(region)
     if (s == null) return if (painted) 1f else 0f
-    val t = (motion.since(s.start) / s.seconds).coerceIn(0f, 1f)
+    val t = (motion.since(s.at) / s.seconds).coerceIn(0f, 1f)
     return if (s.painted) smoothstep(0f, 1f, t) else 1 - smoothstep(0f, 1f, t)
 }
 
@@ -654,19 +667,18 @@ private fun sparklePath(pinch: Float = 0.133f): Path {
  * Two gold sparkles pop at the area's edge, on its number's free circle, as the paint lands; not
  * where the area is too small on screen for them to read, nor more than one pair in 0.3 s.
  */
-private fun popSparkles(motion: CanvasMotion, scene: com.paintbymoonlight.core.Scene, camera: Camera, density: Float, region: Int, seconds: Float, now: Long) {
+private fun popSparkles(motion: CanvasMotion, scene: com.paintbymoonlight.core.Scene, camera: Camera, density: Float, region: Int, seconds: Float) {
     val labelIndex = scene.labelOf[region]
     if (labelIndex < 0) return
     val label = scene.labels[labelIndex]
     val reach = label.radius * camera.scale
-    if (reach < 10 * density || now - motion.lastSparkles < CanvasMotion.seconds(0.3f)) return
-    motion.lastSparkles = now
+    if (reach < 10 * density || motion.since(motion.lastSparkles) < 0.3f) return
+    motion.lastSparkles = motion.moment(lasts = 0f)
     val cx = label.x * camera.scale + camera.offset.x
     val cy = label.y * camera.scale + camera.offset.y
     val size = (reach * 0.45f).coerceIn(10 * density, 22 * density)
     listOf(-0.7f, 2.3f).forEachIndexed { k, angle ->
-        val start = now + CanvasMotion.seconds(seconds * 0.8f + k * 0.08f)
-        motion.sparkles.add(CanvasMotion.Sparkle(cx + reach * cos(angle), cy + reach * sin(angle), size * if (k == 0) 1f else 0.7f, start))
+        val at = motion.moment(delay = seconds * 0.8f + k * 0.08f, lasts = 0.8f)
+        motion.sparkles.add(CanvasMotion.Sparkle(cx + reach * cos(angle), cy + reach * sin(angle), size * if (k == 0) 1f else 0.7f, at))
     }
-    motion.keep(now + CanvasMotion.seconds(seconds * 0.8f + 0.9f))
 }
