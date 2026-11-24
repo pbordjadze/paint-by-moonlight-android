@@ -66,11 +66,13 @@ class AppTour {
 
         @JvmStatic
         @BeforeClass
-        fun emptyLibrary() = runBlocking {
-            val library = app.library
-            library.awaitLoaded()
-            library.paintings.value.forEach { library.delete(it.id) }
-            shots.listFiles()?.forEach { it.delete() }
+        fun emptyLibrary() {
+            runBlocking {
+                val library = app.library
+                library.awaitLoaded()
+                library.paintings.value.forEach { library.delete(it.id) }
+                shots.listFiles()?.forEach { it.delete() }
+            }
         }
 
         /** The two paintings the rest of the tour looks at, made once. */
