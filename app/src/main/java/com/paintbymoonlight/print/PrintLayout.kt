@@ -20,13 +20,13 @@ data class Paper(val width: Float, val height: Float) {
 /**
  * How the template prints: how big (`across`, sheets along the picture's longer printed side;
  * null is the fewest whose numbers are legible) and which layers, as the iOS app's
- * `PDFExporter.Layout`. The lines always print.
+ * `PDFExporter.Layout`. The lines always print; the color key prints with the numbers, and
+ * without them the template is a coloring page.
  */
 data class PrintChoices(
     val across: Int? = null,
     val numbers: Boolean = true,
     val colorHints: Boolean = false,
-    val colorKey: Boolean = true,
 )
 
 /** A number's printed size in canvas units, and whether it is a detail area's (its floor is lower). */
@@ -54,9 +54,10 @@ data class Sheets(
 
     /** The part of the printed template (points, origin top-left) sheet ([column], [row]) shows. */
     fun window(column: Int, row: Int): Window {
-        val x = column * (bodyWidth - OVERLAP)
-        val y = row * (bodyHeight - OVERLAP)
-        return Window(x, y, min(bodyWidth, printedWidth - x), min(bodyHeight, printedHeight - y))
+        val x = column * (bodyWidth.toDouble() - OVERLAP)
+        val y = row * (bodyHeight.toDouble() - OVERLAP)
+        return Window(x.toFloat(), y.toFloat(), min(bodyWidth.toDouble(), printedWidth - x).toFloat(),
+            min(bodyHeight.toDouble(), printedHeight - y).toFloat())
     }
 
     data class Window(val x: Float, val y: Float, val width: Float, val height: Float)
@@ -98,31 +99,36 @@ data class Sheets(
          * across [across] sheets when the painter asks for it bigger.
          */
         fun plan(width: Float, height: Float, pageWidth: Float, pageHeight: Float, legible: Float?, across: Int?): Sheets {
-            val bw = bodyWidth(pageWidth)
-            val bh = bodyHeight(pageHeight)
-            val w = max(width, 1f)
-            val h = max(height, 1f)
-            fun make(scale: Float, columns: Int, rows: Int) = Sheets(scale, columns, rows, bw, bh, w * scale, h * scale)
+            // In Double, as iOS's CGFloat: sheet counts round up, and a last bit can ask for a sheet more.
+            val bw = max(bodyWidth(pageWidth).toDouble(), 1.0)
+            val bh = max(bodyHeight(pageHeight).toDouble(), 1.0)
+            val w = max(width.toDouble(), 1.0)
+            val h = max(height.toDouble(), 1.0)
+            val o = OVERLAP.toDouble()
+            fun make(scale: Double, columns: Int, rows: Int) =
+                Sheets(scale.toFloat(), columns, rows, bw.toFloat(), bh.toFloat(), (w * scale).toFloat(), (h * scale).toFloat())
             val fitted = min(bw / w, bh / h)
-            val asked = across?.let { acrossScale(w, h, bw, bh, it) } ?: 0f
-            val needed = max(legible ?: 0f, asked)
+            // Paper too small to overlap sheets on (a card, A9): the picture fitted to one.
+            if (bw <= 2 * o || bh <= 2 * o) return make(fitted, 1, 1)
+            val asked = across?.let { acrossScale(w, h, bw, bh, it) } ?: 0.0
+            val needed = max(legible?.toDouble() ?: 0.0, asked)
             if (fitted >= needed) return make(fitted, 1, 1)
             // n sheets with overlap o cover n·(w − o) + o.
-            fun count(extent: Float, window: Float) = max(1, ceil(((extent * needed - OVERLAP) / (window - OVERLAP)).toDouble()).toInt())
+            fun count(extent: Double, window: Double) = max(1, ceil((extent * needed - o) / (window - o)).toInt())
             val columns = count(w, bw)
             val rows = count(h, bh)
             // Fill the grid: the scale only grows past `needed`, and no row or column is left empty.
-            val scale = min((columns * (bw - OVERLAP) + OVERLAP) / w, (rows * (bh - OVERLAP) + OVERLAP) / h)
+            val scale = min((columns * (bw - o) + o) / w, (rows * (bh - o) + o) / h)
             return make(scale, columns, rows)
         }
 
         /** The scale at which the picture spans [sheets] sheets along the side that fills a page first. */
-        private fun acrossScale(w: Float, h: Float, bw: Float, bh: Float, sheets: Int): Float {
+        private fun acrossScale(w: Double, h: Double, bw: Double, bh: Double, sheets: Int): Double {
             val alongWidth = w / bw >= h / bh
             val extent = if (alongWidth) w else h
             val window = if (alongWidth) bw else bh
             // A hair under: at exactly this scale rounding could ask for one sheet more.
-            return (max(sheets, 1) * (window - OVERLAP) + OVERLAP) / extent * (1 - 1e-6f)
+            return (max(sheets, 1) * (window - OVERLAP) + OVERLAP) / extent * (1 - 1e-9)
         }
 
         /**

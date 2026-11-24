@@ -3,6 +3,8 @@ package com.paintbymoonlight.print
 import android.content.Context
 import android.os.Bundle
 import android.os.CancellationSignal
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.print.PageRange
 import android.print.PrintAttributes
@@ -11,8 +13,10 @@ import android.print.PrintDocumentInfo
 import android.print.PrintManager
 import android.util.Log
 import com.paintbymoonlight.core.Scene
+import com.paintbymoonlight.data.SharedPaintings
 import java.io.FileOutputStream
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * The printable template handed to the system's print dialog, which asks for the printer, the
@@ -26,6 +30,7 @@ class TemplatePrintAdapter(
 ) : PrintDocumentAdapter() {
     private var document: TemplatePrint? = null
     private val worker = Executors.newSingleThreadExecutor()
+    private val main = Handler(Looper.getMainLooper())
 
     override fun onLayout(
         oldAttributes: PrintAttributes?, newAttributes: PrintAttributes, cancellationSignal: CancellationSignal?,
@@ -54,19 +59,20 @@ class TemplatePrintAdapter(
         callback: WriteResultCallback,
     ) {
         val laid = document ?: return callback.onWriteFailed(null)
-        // Drawing a poster's sheets takes a moment: off the main thread, where the dialog lives.
+        val cancelled = AtomicBoolean(false)
+        cancellationSignal?.setOnCancelListener { cancelled.set(true) }
+        // Drawing a poster's sheets takes a moment: off the main thread, where the dialog lives;
+        // its callbacks go back there, as the framework expects. A cancel stops the drawing mid-page.
         worker.execute {
             try {
                 // The framework owns the descriptor and closes it.
-                FileOutputStream(destination.fileDescriptor).let { out ->
-                    laid.write(out) { cancellationSignal?.isCanceled == true }
-                    out.flush()
+                val written = FileOutputStream(destination.fileDescriptor).let { out ->
+                    laid.write(out) { cancelled.get() }.also { out.flush() }
                 }
-                if (cancellationSignal?.isCanceled == true) callback.onWriteCancelled()
-                else callback.onWriteFinished(arrayOf(PageRange.ALL_PAGES))
+                main.post { if (written) callback.onWriteFinished(arrayOf(PageRange.ALL_PAGES)) else callback.onWriteCancelled() }
             } catch (e: Exception) {
                 Log.e(TAG, "Writing the template to print failed", e)
-                callback.onWriteFailed(e.message)
+                main.post { callback.onWriteFailed(e.message) }
             }
         }
     }
@@ -92,7 +98,6 @@ class TemplatePrintAdapter(
         }
 
         /** The file's name where Save as PDF keeps it, and the job's. */
-        fun fileName(title: String): String =
-            "${title.replace(Regex("[^\\p{L}\\p{N} ._-]"), "").trim().ifBlank { "Painting" }} Template.pdf"
+        fun fileName(title: String): String = "${SharedPaintings.fileName(title)} Template.pdf"
     }
 }

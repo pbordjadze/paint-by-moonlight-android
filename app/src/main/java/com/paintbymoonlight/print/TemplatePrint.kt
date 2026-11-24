@@ -3,6 +3,7 @@ package com.paintbymoonlight.print
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
 import com.paintbymoonlight.core.Scene
@@ -21,7 +22,8 @@ import kotlin.math.roundToInt
  * smallest numbers at about 1 pt. Such a template prints on several overlapping sheets instead
  * ([Sheets]), at the scale that prints its smallest number at 2.6 pt (a detail area's at 2 pt),
  * after an overview page showing how they tape together. Each sheet's numbers are no wider than
- * the overlap, so every number is whole on at least one sheet.
+ * the overlap, so every number is whole on at least one sheet, and each sheet holds only its
+ * part of the template. Without numbers it is a coloring page, with no key.
  *
  * [paper] is portrait; the page turns the picture's way unless [landscape] says otherwise.
  */
@@ -77,7 +79,8 @@ class TemplatePrint(
         } else {
             add(PageKind.Template)
         }
-        if (choices.colorKey) add(PageKind.Key)
+        // A coloring page has no numbers to look up: the key goes with them.
+        if (choices.numbers) add(PageKind.Key)
     }
 
     val pageCount: Int get() = pages.size
@@ -86,28 +89,33 @@ class TemplatePrint(
     private val stats get() = if (choices.numbers) PrintPage.statsText(scene) else ""
     private val aspect get() = scene.width / scene.height
 
-    /** Draws page [index] on [canvas], whose units are the page's points (y down). */
-    fun drawPage(index: Int, canvas: Canvas) {
+    /**
+     * Draws page [index] on [canvas], whose units are the page's points (y down); drawing ends
+     * early once [stop] says so.
+     */
+    fun drawPage(index: Int, canvas: Canvas, stop: () -> Boolean = { false }) {
         when (pages[index]) {
-            PageKind.Template -> template(canvas)
-            PageKind.Overview -> overview(canvas)
-            PageKind.Sheet -> sheet(canvas, index - 1)
+            PageKind.Template -> template(canvas, stop)
+            PageKind.Overview -> overview(canvas, stop)
+            PageKind.Sheet -> sheet(canvas, index - 1, stop)
             PageKind.Key -> key(canvas)
         }
         PrintPage.footer(canvas, content)
     }
 
-    /** Writes the whole document as a PDF. */
-    fun write(out: OutputStream, cancelled: () -> Boolean = { false }) {
+    /** Writes the whole document as a PDF; false, with nothing written, once [cancelled] says so. */
+    fun write(out: OutputStream, cancelled: () -> Boolean = { false }): Boolean {
         val document = PdfDocument()
         try {
             for (i in pages.indices) {
-                if (cancelled()) return
+                if (cancelled()) return false
                 val page = document.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, i + 1).create())
-                drawPage(i, page.canvas)
+                drawPage(i, page.canvas, cancelled)
                 document.finishPage(page)
             }
+            if (cancelled()) return false
             document.writeTo(out)
+            return true
         } finally {
             document.close()
         }
@@ -116,33 +124,58 @@ class TemplatePrint(
     fun pdf(): ByteArray = ByteArrayOutputStream().also { write(it) }.toByteArray()
 
     /** Page [index] as it will print, for the screen: [longSide] pixels on its long side, on white. */
-    fun pageImage(index: Int, longSide: Int): Bitmap {
+    fun pageImage(index: Int, longSide: Int, stop: () -> Boolean = { false }): Bitmap {
         val k = longSide / max(pageWidth, pageHeight).toFloat()
         val bitmap = Bitmap.createBitmap(
             (pageWidth * k).roundToInt().coerceAtLeast(1), (pageHeight * k).roundToInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         canvas.drawColor(PrintPage.WHITE)
         canvas.scale(k, k)
-        drawPage(index, canvas)
+        drawPage(index, canvas, stop)
         return bitmap
     }
 
+    /**
+     * Sheet [w]'s share of the template: what lies in its window (canvas units, with room for a
+     * line's width), so each sheet holds its part rather than the whole template under a clip.
+     */
+    private fun part(w: Sheets.Window): PrintPage.Part {
+        val pad = 2f
+        val visible = RectF(w.x / sheets.scale - pad, w.y / sheets.scale - pad,
+            (w.x + w.width) / sheets.scale + pad, (w.y + w.height) / sheets.scale + pad)
+        fun within(polylines: List<FloatArray>, bounds: FloatArray, whole: Path) =
+            if (polylines.isEmpty()) whole
+            else Path().apply {
+                polylines.forEachIndexed { i, p ->
+                    if (p.size < 4 || !visible.intersects(bounds[4 * i], bounds[4 * i + 1], bounds[4 * i + 2], bounds[4 * i + 3])) return@forEachIndexed
+                    moveTo(p[0], p[1])
+                    for (j in 1 until p.size / 2) lineTo(p[2 * j], p[2 * j + 1])
+                }
+            }
+        return PrintPage.Part(visible, within(scene.linePolylines, lineBounds, scene.lines),
+            within(scene.strokePolylines, strokeBounds, scene.strokes))
+    }
+
+    private val lineBounds by lazy { bounds(scene.linePolylines) }
+    private val strokeBounds by lazy { bounds(scene.strokePolylines) }
+
     private val frame get() = PrintPage.stroke(PrintPage.gray(0.75f), 0.5f)
 
-    private fun template(canvas: Canvas) {
+    private fun template(canvas: Canvas, stop: () -> Boolean) {
         // A coloring page doesn't count its paints: they aren't on it.
         val body = PrintPage.header(canvas, content, title, stats)
         val rect = PrintPage.fit(aspect, body)
-        PrintPage.template(canvas, scene, rect.left, rect.top, rect.width() / scene.width, choices.numbers, choices.colorHints, numberCap)
+        PrintPage.template(canvas, scene, rect.left, rect.top, rect.width() / scene.width, choices.numbers, choices.colorHints, numberCap,
+            stop = stop)
         canvas.drawRect(rect, frame)
     }
 
     /** How the sheets tape together: the template without numbers, each sheet's part outlined and numbered. */
-    private fun overview(canvas: Canvas) {
+    private fun overview(canvas: Canvas, stop: () -> Boolean) {
         val count = "${sheets.count} sheets"
         val body = PrintPage.header(canvas, content, title, if (choices.numbers) "$stats · $count" else count)
         val rect = PrintPage.fit(aspect, body)
-        PrintPage.template(canvas, scene, rect.left, rect.top, rect.width() / scene.width, numbers = false, hints = choices.colorHints)
+        PrintPage.template(canvas, scene, rect.left, rect.top, rect.width() / scene.width, numbers = false, hints = choices.colorHints, stop = stop)
         val factor = rect.width() / sheets.printedWidth
         val line = PrintPage.stroke(PrintPage.gray(0.3f, 0.8f), 0.75f)
         canvas.drawRect(rect, line)
@@ -166,7 +199,7 @@ class TemplatePrint(
     }
 
     /** Sheet [n] (0-based, row by row): its part of the template at full scale, clipped to the body. */
-    private fun sheet(canvas: Canvas, n: Int) {
+    private fun sheet(canvas: Canvas, n: Int, stop: () -> Boolean) {
         val row = n / sheets.columns
         val column = n % sheets.columns
         val w = sheets.window(column, row)
@@ -175,7 +208,9 @@ class TemplatePrint(
         val visible = RectF(body.left, body.top, body.left + w.width, body.top + w.height)
         canvas.save()
         canvas.clipRect(visible)
-        PrintPage.template(canvas, scene, body.left - w.x, body.top - w.y, sheets.scale, choices.numbers, choices.colorHints, numberCap)
+        PrintPage.template(
+            canvas, scene, body.left - w.x, body.top - w.y, sheets.scale, choices.numbers, choices.colorHints, numberCap,
+            part(w), stop)
         canvas.restore()
         canvas.drawRect(visible, frame)
     }
@@ -190,6 +225,23 @@ class TemplatePrint(
             canvas.drawText("Reference", remaining.left, remaining.top + 10f, PrintPage.text(10f, bold = true, color = PrintPage.gray(0.35f)))
             val area = RectF(remaining.left, remaining.top + 20f, remaining.right, remaining.bottom)
             PrintPage.painting(canvas, scene, PrintPage.fit(aspect, area))
+        }
+    }
+
+    private companion object {
+        /** Each polyline's bounds, minX, minY, maxX, maxY in turn. */
+        fun bounds(polylines: List<FloatArray>): FloatArray {
+            val out = FloatArray(polylines.size * 4)
+            polylines.forEachIndexed { i, p ->
+                var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
+                var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+                for (j in 0 until p.size / 2) {
+                    minX = min(minX, p[2 * j]); maxX = max(maxX, p[2 * j])
+                    minY = min(minY, p[2 * j + 1]); maxY = max(maxY, p[2 * j + 1])
+                }
+                out[4 * i] = minX; out[4 * i + 1] = minY; out[4 * i + 2] = maxX; out[4 * i + 3] = maxY
+            }
+            return out
         }
     }
 }

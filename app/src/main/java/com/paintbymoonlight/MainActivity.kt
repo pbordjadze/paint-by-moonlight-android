@@ -23,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -115,7 +116,6 @@ private fun MoonlightNav(app: MoonlightApp, opened: Uri?) {
                             onNew = { gate.start { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) } },
                             onOpen = { nav.navigate(Routes.paint(it)) },
                             onShare = share,
-                            onPrint = { id -> nav.navigate(Routes.print(id)) },
                             onPrintPages = { id -> nav.navigate(Routes.pages(id)) },
                             onRename = { id, title -> scope.launch { library.rename(id, title) } },
                             onDelete = { id -> scope.launch { library.delete(id) } },
@@ -174,8 +174,8 @@ private fun MoonlightNav(app: MoonlightApp, opened: Uri?) {
                 composable(Routes.PAGES) { entry ->
                     val id = entry.arguments?.getString("id") ?: return@composable
                     val paper = Paper.forCountry(context.resources.configuration.locales[0]?.country)
-                    val model = viewModel { PrintViewModel(library, id, paper) }
-                    PrintScreen(model = model, onBack = { nav.popBackStack() })
+                    val model = viewModel { PrintViewModel(app, library, id, paper, createSavedStateHandle()) }
+                    PrintScreen(model = model, onBack = { nav.popBackStack() }, onBigSheet = { nav.navigate(Routes.print(id)) })
                 }
             }
         }

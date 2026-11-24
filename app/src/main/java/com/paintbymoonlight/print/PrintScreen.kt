@@ -1,17 +1,21 @@
 package com.paintbymoonlight.print
 
+import android.content.Intent
 import android.graphics.Bitmap
 import android.icu.util.LocaleData
 import android.icu.util.ULocale
+import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -26,9 +30,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Print
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.Wallpaper
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonGroupDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -47,6 +53,7 @@ import androidx.compose.material3.ToggleButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -57,6 +64,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -66,18 +74,35 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.paintbymoonlight.ui.theme.Moonlight
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 
 /**
  * Print (the iOS app's Print's preview): the pages as they will come out of the printer, how big
  * the picture prints (the fewest legible sheets, or across more) and what prints over the lines
- * (numbers, color hints, the color key). Print hands the pages to the system's dialog, which asks
- * for the printer and paper (Save as PDF among them); Share sends the PDF itself.
+ * (numbers, which bring the color key, and color hints), and One Big Sheet where it is offered.
+ * Print hands the pages to the system's dialog, which asks for the printer and paper (Save as
+ * PDF among them); Share sends the PDF itself.
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun PrintScreen(model: PrintViewModel, onBack: () -> Unit) {
+fun PrintScreen(model: PrintViewModel, onBack: () -> Unit, onBigSheet: (() -> Unit)? = null) {
     val context = LocalContext.current
+    LaunchedEffect(model) {
+        model.shared.collect { shared ->
+            val uri = shared.uri
+            if (uri == null) {
+                Toast.makeText(context, "The pages couldn’t be shared.", Toast.LENGTH_SHORT).show()
+                return@collect
+            }
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "application/pdf"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(send, model.title))
+        }
+    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -96,7 +121,7 @@ fun PrintScreen(model: PrintViewModel, onBack: () -> Unit) {
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         OutlinedButton(
-                            onClick = { model.share(context) },
+                            onClick = model::share,
                             enabled = model.document != null && !model.sharing,
                             modifier = Modifier.weight(1f).height(56.dp),
                         ) {
@@ -139,6 +164,10 @@ fun PrintScreen(model: PrintViewModel, onBack: () -> Unit) {
                 Label("Layers")
                 Layers(model)
                 Spacer(Modifier.height(16.dp))
+                if (onBigSheet != null) {
+                    BigSheetRow(onBigSheet)
+                    Spacer(Modifier.height(16.dp))
+                }
             }
         }
     }
@@ -152,7 +181,9 @@ private fun Pages(document: TemplatePrint) {
     val aspect = document.pageWidth / document.pageHeight.toFloat()
     HorizontalPager(pager, Modifier.fillMaxWidth().height(340.dp), key = { "$it·${document.choices}" }) { index ->
         val image by produceState<Bitmap?>(null, document, index) {
-            value = withContext(Dispatchers.Default) { document.pageImage(index, 1100) }
+            // Choices changed under a drawing: it stops where it is rather than finishing a stale page.
+            val job = coroutineContext.job
+            value = withContext(Dispatchers.Default) { document.pageImage(index, 1100) { !job.isActive } }
         }
         Box(Modifier.fillMaxSize().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
             Box(
@@ -197,42 +228,84 @@ private fun Label(text: String) {
     )
 }
 
-/** The sizes offered, a connected button group: the sheets each takes and how big the picture prints. */
+/**
+ * The sizes offered, a connected button group: the sheets each takes and how big the picture
+ * prints. At a large font they stand one above another, full width, so neither line clips.
+ */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun Sizes(sizes: List<Sheets.Size>, chosen: Int?, onSelect: (Int?) -> Unit) {
     val selected = sizes.firstOrNull { it.across == chosen } ?: sizes.firstOrNull()
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween)) {
-        sizes.forEachIndexed { index, size ->
-            val sheets = if (size.sheets.count == 1) "One Page" else "${size.sheets.count} sheets"
-            ToggleButton(
-                checked = size == selected,
-                onCheckedChange = { onSelect(size.across) },
-                shapes = when {
-                    sizes.size == 1 -> ButtonGroupDefaults.connectedMiddleButtonShapes()
-                    index == 0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
-                    index == sizes.lastIndex -> ButtonGroupDefaults.connectedTrailingButtonShapes()
-                    else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
-                },
-                modifier = Modifier.weight(1f).semantics { role = Role.RadioButton },
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(sheets, maxLines = 1)
-                    Text(sizeText(size.sheets), style = MaterialTheme.typography.labelSmall, maxLines = 1)
-                }
+    val stacked = LocalDensity.current.fontScale >= 1.5f
+    @Composable
+    fun Option(index: Int, size: Sheets.Size, modifier: Modifier) {
+        val sheets = if (size.sheets.count == 1) "One Page" else "${size.sheets.count} sheets"
+        ToggleButton(
+            checked = size == selected,
+            onCheckedChange = { onSelect(size.across) },
+            shapes = when {
+                stacked || sizes.size == 1 -> ButtonGroupDefaults.connectedMiddleButtonShapes()
+                index == 0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
+                index == sizes.lastIndex -> ButtonGroupDefaults.connectedTrailingButtonShapes()
+                else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
+            },
+            modifier = modifier.semantics { role = Role.RadioButton },
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(sheets, textAlign = TextAlign.Center, maxLines = 2)
+                Text(sizeText(size.sheets), style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center, maxLines = 2)
             }
+        }
+    }
+    if (stacked) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            sizes.forEachIndexed { index, size -> Option(index, size, Modifier.fillMaxWidth()) }
+        }
+    } else {
+        Row(
+            Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+            horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
+        ) {
+            sizes.forEachIndexed { index, size -> Option(index, size, Modifier.weight(1f).fillMaxHeight()) }
         }
     }
 }
 
-/** What prints over the lines, which always print. */
+/**
+ * One Big Sheet, as iOS offers it from Print's preview: the template printed whole on one
+ * sheet and mailed.
+ */
+@Composable
+private fun BigSheetRow(onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Wallpaper, null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text("One Big Sheet", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Printed full size and mailed to you",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** What prints over the lines, which always print; the color key comes with the numbers. */
 @Composable
 private fun Layers(model: PrintViewModel) {
     val choices = model.choices
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Layer("Numbers", choices.numbers, model::toggleNumbers)
         Layer("Color Hints", choices.colorHints, model::toggleColorHints)
-        Layer("Color Key", choices.colorKey, model::toggleColorKey)
     }
 }
 

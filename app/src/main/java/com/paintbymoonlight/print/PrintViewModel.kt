@@ -1,13 +1,13 @@
 package com.paintbymoonlight.print
 
 import android.content.Context
-import android.content.Intent
+import android.net.Uri
 import android.util.Log
-import android.widget.Toast
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.FileProvider
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.paintbymoonlight.core.Core
@@ -15,28 +15,51 @@ import com.paintbymoonlight.core.Scene
 import com.paintbymoonlight.data.Library
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
  * Print's preview (the iOS app's `PrintPreviewSheet`): a painting's printable pages laid out on
- * the region's paper, turned the picture's way, with the painter's choice of size and layers.
+ * the region's paper, turned the picture's way, with the painter's choice of size and layers,
+ * kept across the process being recreated. [app] is the application's context, which outlives
+ * the screen: the PDF is written with it and handed to the screen to share.
  */
-class PrintViewModel(private val library: Library, private val id: String, private val paper: Paper) : ViewModel() {
+class PrintViewModel(
+    private val app: Context,
+    private val library: Library,
+    private val id: String,
+    private val paper: Paper,
+    private val saved: SavedStateHandle,
+) : ViewModel() {
     var title by mutableStateOf("")
         private set
     var scene by mutableStateOf<Scene?>(null)
         private set
     var loadFailed by mutableStateOf(false)
         private set
-    var choices by mutableStateOf(PrintChoices())
+    var choices by mutableStateOf(
+        PrintChoices(
+            across = saved.get<Int>(ACROSS),
+            numbers = saved.get<Boolean>(NUMBERS) ?: true,
+            colorHints = saved.get<Boolean>(HINTS) ?: false,
+        ),
+    )
         private set
     /** The document the preview shows, for [choices]. */
     var document by mutableStateOf<TemplatePrint?>(null)
         private set
     var sharing by mutableStateOf(false)
         private set
+
+    /** What a share came to: the PDF to share, or null when it couldn't be written. */
+    class Shared(val uri: Uri?)
+
+    private val shares = Channel<Shared>(Channel.BUFFERED)
+    val shared: Flow<Shared> = shares.receiveAsFlow()
 
     init {
         viewModelScope.launch {
@@ -45,6 +68,8 @@ class PrintViewModel(private val library: Library, private val id: String, priva
                 title = meta.title
                 scene = Core.scene(library.template(id), meta.seed, meta.nicknameVersion)
                 layOut()
+                // A size kept from before may not be offered here.
+                if (choices.across != null && sizes.none { it.across == choices.across }) choose(choices.copy(across = null))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -59,12 +84,9 @@ class PrintViewModel(private val library: Library, private val id: String, priva
 
     fun chooseSize(across: Int?) = choose(choices.copy(across = across))
 
-    /** Numbers off is a coloring page: the key has nothing to look up and goes with them, and comes back with them. */
-    fun toggleNumbers() = choose(choices.copy(numbers = !choices.numbers, colorKey = !choices.numbers))
+    fun toggleNumbers() = choose(choices.copy(numbers = !choices.numbers))
 
     fun toggleColorHints() = choose(choices.copy(colorHints = !choices.colorHints))
-
-    fun toggleColorKey() = choose(choices.copy(colorKey = !choices.colorKey))
 
     private fun choose(next: PrintChoices) {
         choices = next
@@ -74,6 +96,9 @@ class PrintViewModel(private val library: Library, private val id: String, priva
             choices = next.copy(across = null)
             layOut()
         }
+        saved[ACROSS] = choices.across
+        saved[NUMBERS] = choices.numbers
+        saved[HINTS] = choices.colorHints
     }
 
     private fun layOut() {
@@ -87,36 +112,34 @@ class PrintViewModel(private val library: Library, private val id: String, priva
         TemplatePrintAdapter.print(context, scene, title, choices)
     }
 
-    /** Shares the pages as a PDF, for whoever prints it elsewhere or hasn't the app. */
-    fun share(context: Context) {
+    /** Writes the pages as a PDF to share, for whoever prints it elsewhere or hasn't the app; [shared] says when. */
+    fun share() {
         val document = document ?: return
         if (sharing) return
         sharing = true
         viewModelScope.launch {
-            try {
+            val uri = try {
                 val file = withContext(Dispatchers.Default) {
-                    val dir = File(context.cacheDir, "shared").apply { mkdirs() }
+                    val dir = File(app.cacheDir, "shared").apply { mkdirs() }
                     File(dir, TemplatePrintAdapter.fileName(title)).also { out -> out.outputStream().use { document.write(it) } }
                 }
-                val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
-                val send = Intent(Intent.ACTION_SEND).apply {
-                    type = "application/pdf"
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                context.startActivity(Intent.createChooser(send, title))
+                FileProvider.getUriForFile(app, "${app.packageName}.files", file)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Writing the template's PDF to share failed", e)
-                Toast.makeText(context, "The pages couldn’t be shared.", Toast.LENGTH_SHORT).show()
+                null
             } finally {
                 sharing = false
             }
+            shares.send(Shared(uri))
         }
     }
 
     companion object {
         private const val TAG = "Print"
+        private const val ACROSS = "across"
+        private const val NUMBERS = "numbers"
+        private const val HINTS = "colorHints"
     }
 }

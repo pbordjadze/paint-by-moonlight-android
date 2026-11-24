@@ -74,4 +74,14 @@ class SheetsTest {
         val sheets = Sheets.plan(3000f, 2000f, letter.height, letter.width, legible = null, across = null)
         assertEquals(1, sheets.count)
     }
+
+    @Test
+    fun tinyPaperPrintsOnePageFitted() {
+        // A9, 37 × 52 mm: no room for a body beside the margins, let alone overlapping sheets.
+        for (paper in listOf(Paper(105f, 147f), Paper(74f, 105f), Paper(100f, 140f))) {
+            val sheets = Sheets.plan(1100f, 800f, paper.width, paper.height, legible = 2f, across = 4)
+            assertEquals(1, sheets.count)
+            assertTrue(sheets.scale > 0f && sheets.scale.isFinite())
+        }
+    }
 }

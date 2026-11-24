@@ -2,6 +2,7 @@ package com.paintbymoonlight.print
 
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.text.TextPaint
@@ -55,15 +56,22 @@ internal object PrintPage {
 
     fun defaultCap(scene: Scene): Float = Sheets.MAXIMUM_NUMBER_FRACTION * max(scene.width, scene.height)
 
+    /** What part of a template a page draws: the areas, lines and numbers inside [visible] (canvas units). */
+    class Part(val visible: RectF?, val lines: Path, val strokes: Path)
+
     /**
      * The template at [scale] points per canvas unit with its top-left at ([left], [top]): each
      * area washed in its paint when [hints], every line, the line art inside areas, and the
-     * numbers when [numbers]. Vectors throughout.
+     * numbers when [numbers]. Vectors throughout. With [part] only what it holds is drawn (a
+     * sheet's share, rather than the whole template under a clip). Drawing ends early once
+     * [stop] says so (a print cancelled, a preview no longer wanted).
      */
     fun template(
         canvas: Canvas, scene: Scene, left: Float, top: Float, scale: Float,
         numbers: Boolean = true, hints: Boolean = false, numberCap: Float = defaultCap(scene),
+        part: Part? = null, stop: () -> Boolean = { false },
     ) {
+        val visible = part?.visible
         canvas.save()
         canvas.translate(left, top)
         canvas.scale(scale, scale)
@@ -71,32 +79,43 @@ internal object PrintPage {
             // Stroked a hair as well as filled, so neighbours meet without a seam of paper.
             val wash = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL_AND_STROKE; strokeWidth = 0.3f / scale }
             val washes = scene.paints.map { sketchColor(it.color) }
-            for (region in scene.regions) {
+            scene.regions.forEachIndexed { i, region ->
+                if (i % CHECK_EVERY == 0 && stop()) return canvas.restore()
+                if (visible != null && !RectF.intersects(visible, region.bounds)) return@forEachIndexed
                 wash.color = washes.getOrElse(region.paint) { WHITE }
                 canvas.drawPath(region.path, wash)
             }
         }
+        if (stop()) return canvas.restore()
         val line = stroke(LINE, OUTLINE / scale).apply {
             strokeJoin = Paint.Join.ROUND
             strokeCap = Paint.Cap.ROUND
         }
-        canvas.drawPath(scene.lines, line)
-        if (!scene.strokes.isEmpty) canvas.drawPath(scene.strokes, line)
+        val lines = part?.lines ?: scene.lines
+        val strokes = part?.strokes ?: scene.strokes
+        canvas.drawPath(lines, line)
+        if (!strokes.isEmpty) canvas.drawPath(strokes, line)
         if (numbers) {
             val number = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = NUMBER
                 textAlign = Paint.Align.CENTER
                 typeface = Typeface.create(Typeface.SERIF, Typeface.NORMAL)
             }
-            for (label in scene.labels) {
-                val paint = scene.regions.getOrNull(label.region)?.paint ?: continue
+            scene.labels.forEachIndexed { i, label ->
+                if (i % CHECK_EVERY == 0 && stop()) return canvas.restore()
+                val paint = scene.regions.getOrNull(label.region)?.paint ?: return@forEachIndexed
                 val size = numberSize(scene, label.fontSize, numberCap)
+                if (visible != null && !visible.intersects(label.x - size * 2, label.y - size, label.x + size * 2, label.y + size)) {
+                    return@forEachIndexed
+                }
                 number.textSize = size
                 canvas.drawText((paint + 1).toString(), label.x, label.y + size * 0.36f, number)
             }
         }
         canvas.restore()
     }
+
+    private const val CHECK_EVERY = 256
 
     /** The finished picture, every area in its paint, in [rect]. */
     fun painting(canvas: Canvas, scene: Scene, rect: RectF) {

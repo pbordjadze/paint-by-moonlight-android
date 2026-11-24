@@ -7,10 +7,12 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.lifecycle.SavedStateHandle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.paintbymoonlight.core.Core
@@ -64,6 +66,7 @@ class PrintTest {
         val regions = ArrayList<Region>()
         val labels = ArrayList<Label>()
         val lines = Path()
+        val polylines = ArrayList<FloatArray>()
         for (r in 0 until rows) for (c in 0 until columns) {
             val x = c * cell
             val y = r * cell
@@ -73,8 +76,9 @@ class PrintTest {
             regions += Region((r * 3 + c) % paints, cell * cell, isDetail, RectF(x, y, x + cell, y + cell), path, listOf(loop))
             labels += Label(x + cell / 2, y + cell / 2, if (isDetail) numberSize / 2 else numberSize, regions.size - 1)
             lines.addRect(x, y, x + cell, y + cell, Path.Direction.CW)
+            polylines += floatArrayOf(x, y, x + cell, y, x + cell, y + cell, x, y + cell, x, y)
         }
-        return Scene(columns * cell, rows * cell, palette, regions, lines, labels, Path())
+        return Scene(columns * cell, rows * cell, palette, regions, lines, labels, Path(), polylines, emptyList())
     }
 
     private fun pages(pdf: ByteArray, name: String): Int {
@@ -122,9 +126,26 @@ class PrintTest {
     @Test
     fun aColoringPageHasNoKeyAndNeedsNoSheets() {
         val scene = scene(columns = 40, rows = 30, cell = 40f, paints = 120, numberSize = 4f)
-        val print = TemplatePrint(scene, "Coloring", PrintChoices(numbers = false, colorKey = false, colorHints = true), Paper.LETTER)
+        val print = TemplatePrint(scene, "Coloring", PrintChoices(numbers = false, colorHints = true), Paper.LETTER)
         assertEquals(1, print.pageCount)
         assertEquals(1, pages(print.pdf(), "coloring"))
+    }
+
+    /** Each sheet holds its part of the template, not all of it under a clip: a poster's PDF grows far slower than its sheets. */
+    @Test
+    fun aPostersSheetsHoldOnlyTheirPart() {
+        val scene = scene(columns = 80, rows = 60, cell = 20f, paints = 60, numberSize = 6f)
+        val one = TemplatePrint(scene, "Poster", PrintChoices(numbers = false), Paper.LETTER)
+        assertEquals(1, one.sheets.count)
+        val poster = TemplatePrint(scene, "Poster", PrintChoices(numbers = false, across = 5), Paper.LETTER)
+        val count = poster.sheets.count
+        assertTrue("$count sheets", count >= 20)
+        val onePage = one.pdf().size
+        val bytes = poster.pdf().size
+        Log.i("PrintTest", "one page: $onePage bytes; $count sheets and their overview: $bytes bytes")
+        // The overview is the whole template, and the sheets together about one more with their
+        // overlaps; drawn whole under a clip they would be about $count times one page.
+        assertTrue("$bytes bytes for $count sheets, $onePage for one page", bytes < onePage * 5)
     }
 
     @Test
@@ -158,7 +179,7 @@ class PrintTest {
             app.library.add(meta, made.template, photo, Thumbnails.render(scene, Progress(scene.regions.size)))
         }
         try {
-            val model = PrintViewModel(app.library, meta.id, Paper.LETTER)
+            val model = PrintViewModel(app, app.library, meta.id, Paper.LETTER, SavedStateHandle())
             compose.runOnUiThread {
                 compose.activity.setContent { MoonlightTheme { PrintScreen(model = model, onBack = {}) } }
             }
