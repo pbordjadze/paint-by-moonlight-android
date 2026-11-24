@@ -1,6 +1,7 @@
 package com.paintbymoonlight.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.material3.MotionScheme
@@ -9,6 +10,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -96,6 +98,13 @@ private val typography = base.copy(
 )
 
 private fun TextStyle.serif() = copy(fontFamily = FontFamily.Serif, fontWeight = FontWeight.Medium)
+
+/**
+ * A card raised off the page: white on the light paper, a lighter tone on the dark (where the
+ * lowest container would sink below the page instead).
+ */
+val ColorScheme.raised: Color
+    get() = if (surface.luminance() > 0.5f) surfaceContainerLowest else surfaceContainerHigh
 
 /** The numerals on swatches and the canvas. */
 val NumeralFamily = FontFamily.Serif

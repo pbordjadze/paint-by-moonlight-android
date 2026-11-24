@@ -1,6 +1,17 @@
 package com.paintbymoonlight.ui.paint
 
 import android.os.SystemClock
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import com.paintbymoonlight.ui.paintingBounds
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
 import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
@@ -94,16 +105,43 @@ import kotlinx.coroutines.launch
 fun PaintScreen(
     model: PaintViewModel,
     preferences: Preferences,
+    thumbnail: File,
     onBack: () -> Unit,
     onShare: () -> Unit,
     onPrint: (() -> Unit)?,
 ) {
     when (val state = model.state) {
-        PaintViewModel.State.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingIndicator() }
+        PaintViewModel.State.Loading -> Opening(model.id, thumbnail)
         is PaintViewModel.State.Failed -> Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
             Text(state.message, style = MaterialTheme.typography.bodyLarge)
         }
         is PaintViewModel.State.Ready -> Painting(model, state, preferences, onBack, onShare, onPrint)
+    }
+}
+
+/**
+ * While the painting opens: its gallery picture where the canvas will be, so the shared
+ * transition has somewhere to grow to. A loading indicator only if opening takes a while.
+ */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun Opening(id: String, thumbnail: File) {
+    val image by produceState<ImageBitmap?>(null, thumbnail) {
+        value = withContext(Dispatchers.IO) { BitmapFactory.decodeFile(thumbnail.path)?.asImageBitmap() }
+    }
+    var slow by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { delay(600); slow = true }
+    Box(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer).statusBarsPadding().navigationBarsPadding(),
+        contentAlignment = Alignment.Center,
+    ) {
+        image?.let {
+            Image(
+                it, contentDescription = null, contentScale = ContentScale.Fit,
+                modifier = Modifier.padding(24.dp).then(paintingBounds(id, RectangleShape)),
+            )
+        }
+        if (slow) LoadingIndicator()
     }
 }
 
@@ -205,7 +243,7 @@ private fun Painting(
                 onUndo = ::undo,
                 onMore = { menu = true },
             )
-            Box(Modifier.weight(1f).fillMaxWidth()) {
+            Box(Modifier.weight(1f).fillMaxWidth().then(paintingBounds(model.id, RectangleShape))) {
                 PaintCanvas(
                     session = session,
                     camera = camera,

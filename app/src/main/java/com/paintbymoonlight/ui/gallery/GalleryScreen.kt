@@ -2,7 +2,11 @@ package com.paintbymoonlight.ui.gallery
 
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,9 +20,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.foundation.lazy.staggeredgrid.items
+import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
@@ -30,12 +36,13 @@ import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularWavyProgressIndicator
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.MediumExtendedFloatingActionButton
+import androidx.compose.material3.ripple
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +52,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -52,6 +60,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -64,12 +73,17 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.paintbymoonlight.data.Library
 import com.paintbymoonlight.data.PaintingMeta
+import com.paintbymoonlight.ui.paintingBounds
 import com.paintbymoonlight.ui.theme.Moonlight
+import com.paintbymoonlight.ui.theme.raised
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/** The painter's paintings, newest first; New Painting opens the photo picker. */
+/**
+ * The painter's paintings, newest first, each whole on a raised card in a staggered grid; a
+ * long press opens a card's menu. New painting opens the photo picker.
+ */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun GalleryScreen(
@@ -84,6 +98,9 @@ fun GalleryScreen(
     val paintings by library.paintings.collectAsStateWithLifecycle()
     val loaded by library.loaded.collectAsStateWithLifecycle()
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val grid = rememberLazyStaggeredGridState()
+    // Collapses to its icon while the painter scrolls down the paintings, back on the way up.
+    val fabExpanded by remember { derivedStateOf { !grid.canScrollBackward || grid.lastScrolledBackward } }
     var renaming by remember { mutableStateOf<PaintingMeta?>(null) }
     var deleting by remember { mutableStateOf<PaintingMeta?>(null) }
     Scaffold(
@@ -97,21 +114,26 @@ fun GalleryScreen(
             )
         },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = onNew,
-                icon = { Icon(Icons.Rounded.Add, null) },
+            MediumExtendedFloatingActionButton(
                 text = { Text("New painting") },
+                icon = { Icon(Icons.Rounded.Add, contentDescription = if (fabExpanded) null else "New painting") },
+                onClick = onNew,
+                expanded = fabExpanded,
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
             )
         },
     ) { padding ->
         if (paintings.isEmpty()) {
             if (loaded) Empty(Modifier.padding(padding))
         } else {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 160.dp),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 4.dp, bottom = 104.dp),
+            // Each painting whole at its own shape, so the columns stagger.
+            LazyVerticalStaggeredGrid(
+                columns = StaggeredGridCells.Adaptive(minSize = 160.dp),
+                state = grid,
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 4.dp, bottom = 120.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                verticalItemSpacing = 14.dp,
                 modifier = Modifier.fillMaxSize(),
             ) {
                 items(paintings, key = { it.id }) { meta ->
@@ -200,31 +222,56 @@ private fun PaintingCard(
         value = withContext(Dispatchers.IO) { BitmapFactory.decodeFile(thumbnail.path)?.asImageBitmap() }
     }
     val fraction = if (meta.regionCount > 0) meta.paintedCount / meta.regionCount.toFloat() else 0f
+    val press = remember { MutableInteractionSource() }
+    val pressed by press.collectIsPressedAsState()
+    // The card's corners round further under the finger, Expressive's press shape morph.
+    val corner by animateDpAsState(if (pressed) 32.dp else 24.dp, MaterialTheme.motionScheme.fastSpatialSpec())
+    val shape = RoundedCornerShape(corner)
+    // A sliver of a panorama or a very tall painting is cropped rather than stretching the column.
+    val aspect = (if (meta.aspect > 0f) meta.aspect else 1f).coerceIn(0.5f, 2f)
     Card(
         modifier = modifier
-            .combinedClickable(onClick = onOpen, onLongClick = { menu = true }, onLongClickLabel = "More")
+            .clip(shape)
+            .combinedClickable(
+                interactionSource = press,
+                indication = ripple(),
+                onClick = onOpen,
+                onLongClick = { menu = true },
+                onLongClickLabel = "More",
+            )
             .semantics { contentDescription = "${meta.title}, ${if (meta.finished != null) "finished" else "${(fraction * 100).toInt()}% painted"}" },
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        shape = shape,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.raised),
     ) {
-        Box(Modifier.fillMaxWidth().aspectRatio(1f).padding(10.dp), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(aspect)
+                .then(paintingBounds(meta.id, RoundedCornerShape(topStart = corner, topEnd = corner)))
+                .background(Moonlight.sheet),
+        ) {
             image?.let {
-                Image(it, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                Image(it, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             }
         }
-        Row(Modifier.padding(start = 14.dp, end = 10.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(meta.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    if (meta.finished != null) "Finished" else "${(fraction * 100).toInt()}%",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+        Row(
+            Modifier.padding(start = 14.dp, end = 12.dp, top = 10.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                meta.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(8.dp))
             if (meta.finished != null) {
                 Icon(Icons.Rounded.AutoAwesome, null, tint = Moonlight.gold, modifier = Modifier.size(20.dp))
             } else {
-                CircularWavyProgressIndicator(progress = { fraction }, modifier = Modifier.size(22.dp))
+                CircularProgressIndicator(
+                    progress = { fraction },
+                    modifier = Modifier.size(22.dp),
+                    strokeWidth = 3.dp,
+                    gapSize = 2.dp,
+                )
             }
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {

@@ -12,7 +12,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
@@ -25,6 +27,8 @@ import com.paintbymoonlight.data.Library
 import com.paintbymoonlight.data.Thumbnails
 import com.paintbymoonlight.print.BigSheetScreen
 import com.paintbymoonlight.print.BigSheetViewModel
+import com.paintbymoonlight.ui.LocalDestinationTransition
+import com.paintbymoonlight.ui.LocalSharedTransition
 import com.paintbymoonlight.ui.create.CreateScreen
 import com.paintbymoonlight.ui.create.CreateViewModel
 import com.paintbymoonlight.ui.gallery.GalleryScreen
@@ -72,51 +76,61 @@ private fun MoonlightNav(app: MoonlightApp) {
     }
     val share: (String) -> Unit = { id -> scope.launch { sharePainting(context, library, id) } }
 
-    NavHost(navController = nav, startDestination = Routes.GALLERY) {
-        composable(Routes.GALLERY) {
-            GalleryScreen(
-                library = library,
-                onNew = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                onOpen = { nav.navigate(Routes.paint(it)) },
-                onShare = share,
-                onPrint = { id -> nav.navigate(Routes.print(id)) },
-                onRename = { id, title -> scope.launch { library.rename(id, title) } },
-                onDelete = { id -> scope.launch { library.delete(id) } },
-            )
-        }
-        composable(Routes.CREATE) { entry ->
-            val photo = Uri.parse(entry.arguments?.getString("photo") ?: "")
-            val model = viewModel { CreateViewModel(library, app.contentResolver, photo) }
-            CreateScreen(
-                model = model,
-                preferences = app.preferences,
-                onBack = { nav.popBackStack() },
-                onMade = { id ->
-                    nav.navigate(Routes.paint(id)) { popUpTo(Routes.GALLERY) }
-                },
-            )
-        }
-        composable(Routes.PAINT) { entry ->
-            val id = entry.arguments?.getString("id") ?: return@composable
-            val model = viewModel { PaintViewModel(library, id) }
-            PaintScreen(
-                model = model,
-                preferences = app.preferences,
-                onBack = { nav.popBackStack() },
-                // Both read the painting from disk: wait for the last fill to be saved.
-                onShare = { scope.launch { model.saveNow().join(); sharePainting(context, library, id) } },
-                onPrint = {
-                    scope.launch {
-                        model.saveNow().join()
-                        nav.navigate(Routes.print(id))
+    // The painting's picture is shared between the gallery and the canvas (paintingBounds).
+    SharedTransitionLayout {
+        CompositionLocalProvider(LocalSharedTransition provides this) {
+            NavHost(navController = nav, startDestination = Routes.GALLERY) {
+                composable(Routes.GALLERY) {
+                    CompositionLocalProvider(LocalDestinationTransition provides this) {
+                        GalleryScreen(
+                            library = library,
+                            onNew = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                            onOpen = { nav.navigate(Routes.paint(it)) },
+                            onShare = share,
+                            onPrint = { id -> nav.navigate(Routes.print(id)) },
+                            onRename = { id, title -> scope.launch { library.rename(id, title) } },
+                            onDelete = { id -> scope.launch { library.delete(id) } },
+                        )
                     }
-                },
-            )
-        }
-        composable(Routes.PRINT) { entry ->
-            val id = entry.arguments?.getString("id") ?: return@composable
-            val model = viewModel { BigSheetViewModel(library, id) }
-            BigSheetScreen(model = model, onBack = { nav.popBackStack() })
+                }
+                composable(Routes.CREATE) { entry ->
+                    val photo = Uri.parse(entry.arguments?.getString("photo") ?: "")
+                    val model = viewModel { CreateViewModel(library, app.contentResolver, photo) }
+                    CreateScreen(
+                        model = model,
+                        preferences = app.preferences,
+                        onBack = { nav.popBackStack() },
+                        onMade = { id ->
+                            nav.navigate(Routes.paint(id)) { popUpTo(Routes.GALLERY) }
+                        },
+                    )
+                }
+                composable(Routes.PAINT) { entry ->
+                    val id = entry.arguments?.getString("id") ?: return@composable
+                    val model = viewModel { PaintViewModel(library, id) }
+                    CompositionLocalProvider(LocalDestinationTransition provides this) {
+                        PaintScreen(
+                            model = model,
+                            preferences = app.preferences,
+                            thumbnail = library.thumbnailFile(id),
+                            onBack = { nav.popBackStack() },
+                            // Both read the painting from disk: wait for the last fill to be saved.
+                            onShare = { scope.launch { model.saveNow().join(); sharePainting(context, library, id) } },
+                            onPrint = {
+                                scope.launch {
+                                    model.saveNow().join()
+                                    nav.navigate(Routes.print(id))
+                                }
+                            },
+                        )
+                    }
+                }
+                composable(Routes.PRINT) { entry ->
+                    val id = entry.arguments?.getString("id") ?: return@composable
+                    val model = viewModel { BigSheetViewModel(library, id) }
+                    BigSheetScreen(model = model, onBack = { nav.popBackStack() })
+                }
+            }
         }
     }
 }
