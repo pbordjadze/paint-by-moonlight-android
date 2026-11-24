@@ -155,7 +155,8 @@ private fun Opening(id: String, thumbnail: File) {
                 modifier = Modifier.padding(24.dp).then(paintingBounds(id, RectangleShape)),
             )
         }
-        if (slow) LoadingIndicator()
+        // Under the picture, never over it.
+        if (slow) LoadingIndicator(Modifier.align(Alignment.BottomCenter).padding(bottom = 48.dp))
     }
 }
 
@@ -418,7 +419,11 @@ private fun Painting(
             } else {
                 FINISHED_ROOM * LocalDensity.current.fontScale + navigation
             }
-            val reserve by animateDpAsState(if (complete) room else 0.dp, MaterialTheme.motionScheme.defaultSpatialSpec(), label = "room")
+            // Eased in only as the painting is finished here; a painting opened finished is laid out
+            // so at once, so the opening transition lands on the final layout.
+            val target = if (complete) room else 0.dp
+            val eased by animateDpAsState(target, MaterialTheme.motionScheme.defaultSpatialSpec(), label = "room")
+            val reserve = if (finishedHere) eased else target
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().background(paper)) {
                 val limit = with(LocalDensity.current) { (maxHeight - reserve).toPx() }
                 val gap = with(LocalDensity.current) { FINISHED_GAP.toPx() }
@@ -627,7 +632,8 @@ private fun TopBar(
                 Spacer(Modifier.width(4.dp))
             }
             Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                // A long title takes a second line rather than losing its end.
+                Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(
                     when {
                         !complete -> "${(fraction * 100).toInt()}% painted"
