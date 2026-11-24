@@ -10,11 +10,14 @@ import Synchronization
 /// chooses the settings for the painter's Painting Length on a draft of the photo, then the
 /// template is generated at those settings with the new paintings' tuning and beauty paint.
 ///
-/// The Android app has no subject map yet (iOS reads one from Vision), so it passes no
-/// importance and PaintCore falls back to its own, as `pbn` does; and no line art yet (iOS's
-/// coloring book comes from its Core ML line models), so a painting is a classic template.
-/// The pipeline's seed is the default one iOS uses too, so a photo makes the same painting on
-/// both (the paints' nicknames are seeded per painting, in `Scene`).
+/// What the app found in the photo (`Findings`: the line models' maps, ML Kit's subjects,
+/// faces and text) gives PaintCore what iOS gives it from Vision and Core ML: the importance
+/// map and the subject hints, and the coloring book's input, so a painting is the coloring book
+/// iOS makes (`LineArtSettings()`, the Lines slider at its middle). Without both maps (the
+/// models didn't load) it is a classic painting, and records classic settings, so it
+/// regenerates as made; without a subject or a face PaintCore makes its own importance, as
+/// `pbn` does. The pipeline's seed is the default one iOS uses too (the paints' nicknames are
+/// seeded per painting, in `Scene`).
 public enum Engine {
     /// The iOS app's `CreateModel.newTuning` and `newTaste`, `newPaintMix`.
     static let tuning = PipelineTuning(subjectCellSize: 2.5, faceCellSize: 3)
@@ -30,15 +33,20 @@ public enum Engine {
     }
 
     public static func make(
-        _ image: RGBAImage, length: PaintingLength, job: Job? = nil
+        _ image: RGBAImage, length: PaintingLength, findings: Findings = Findings(), job: Job? = nil
     ) throws -> Made {
         let cancel = CancellationCheck { job?.isCancelled ?? false }
         job?.report(0.02)
+        let importance = findings.importance(width: image.width, height: image.height)
+        let hints = findings.hints
+        let lineArtInput = findings.lineArt(width: image.width, height: image.height)
+        try cancel.throwIfCancelled()
         let draft = AutoSettings.draftImage(from: image)
         let decision = try AutoSettings.choose(
-            image: draft, sourceSize: (image.width, image.height), importance: nil, hints: nil,
-            preference: length, maxCandidates: maxCandidates, lineArt: nil, tuning: tuning, taste: taste,
-            cancel: cancel, firstDraft: nil)
+            image: draft, sourceSize: (image.width, image.height), importance: importance, hints: hints,
+            preference: length, maxCandidates: maxCandidates,
+            lineArt: lineArtInput == nil ? LineArtSettings(style: .classic) : LineArtSettings(),
+            tuning: tuning, taste: taste, cancel: cancel, firstDraft: nil)
         job?.report(0.4)
         let chosen = decision.settings
         let settings = GenerationSettings(
@@ -46,7 +54,7 @@ public enum Engine {
             lineArt: chosen.lineArt, tuning: chosen.tuning, drawing: nil, paintMix: paintMix
         ).normalized
         let output = try TemplateGenerator(settings: settings).generate(
-            from: image, importance: nil, lineArt: nil, cancel: cancel,
+            from: image, importance: importance, lineArt: lineArtInput, cancel: cancel,
             progress: { fraction in job?.report(0.4 + 0.6 * fraction) })
         job?.report(1)
         return Made(template: output.template, settings: settings)
