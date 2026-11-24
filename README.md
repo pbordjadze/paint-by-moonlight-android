@@ -10,7 +10,10 @@ native Jetpack Compose (Material 3 Expressive).
 - `core/`: the Swift package the app loads as `libMoonlightCore.so`: PaintCore (pinned by
   revision in `core/Package.swift`), a C ABI (`MoonlightCore/CABI.swift`), the JNI glue
   (`CMoonlightJNI`) and `moonlight-probe`, which makes a painting from a PPM photo on the command
-  line and prints its hash.
+  line and prints its hash. `MoonlightCore/Exchange.swift` reads and writes the iOS app's
+  `.moonlight` file (a painting sent to someone else to paint) with PaintCore's `SharedPainting`
+  and LZFSE (`CLZFSE`, Apple's reference implementation, BSD-3-Clause);
+  `moonlight-probe --shared <file>…` reads such files, sends them again and reads damaged copies.
 - `app/`: the app. `core/` (Kotlin) is the bridge (`Core`, `Scene`), `data/` the library on disk,
   `ui/` the screens, `print/` One Big Sheet (the template printed full size through the iOS
   app's print relay, `feedback-relay/print.js` in paint-by-number, paid with Google Pay),

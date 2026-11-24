@@ -22,13 +22,42 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- A painting someone sent, a .moonlight file (data/SharedPaintings.kt): by its own
+                 type, sent from Android; as application/octet-stream, the type a file from the
+                 iOS app (which declares none) or an unknown extension arrives as, opened only if
+                 its bytes are a painting's; and by its name where a file manager gives one. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/vnd.paintbymoonlight.painting" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.moonlight" />
+                <data android:pathPattern=".*\\..*\\.moonlight" />
+                <data android:pathPattern=".*\\..*\\..*\\.moonlight" />
+            </intent-filter>
         </activity>
         <!-- Google Pay for One Big Sheet (print/GooglePay.kt). -->
         <meta-data
             android:name="com.google.android.gms.wallet.api.enabled"
             android:value="true" />
         <provider
-            android:name="androidx.core.content.FileProvider"
+            android:name=".data.MoonlightFileProvider"
             android:authorities="${applicationId}.files"
             android:exported="false"
             android:grantUriPermissions="true">

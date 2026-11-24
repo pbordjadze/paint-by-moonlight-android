@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="shared" path="shared/" />
+    <!-- A painting being sent, its .moonlight file (data/SharedPaintings.kt). -->
+    <cache-path name="sending" path="sending/" />
 </paths>

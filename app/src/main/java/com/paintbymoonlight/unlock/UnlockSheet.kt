@@ -228,8 +228,8 @@ fun UnlockContent(paintings: UnlimitedPaintings, onNotNow: suspend () -> Unit, m
     }
 }
 
-/** What stays free, or what the purchase is not, under the sheet's buttons. */
-private const val FOOTNOTE = "Paid once. No ads, no subscription."
+/** What stays free, under the sheet's buttons, in the iOS app's words: a painting someone sends never takes a free painting. */
+private const val FOOTNOTE = "Paintings someone sends you are always free."
 
 /** The app's crescent in gold with two of the Moon's stars, as the iOS sheet draws them. */
 @Composable

@@ -27,6 +27,7 @@ import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Delete
@@ -73,6 +74,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.paintbymoonlight.data.Library
 import com.paintbymoonlight.data.PaintingMeta
+import com.paintbymoonlight.ui.exchange.SendTemplateSheet
 import com.paintbymoonlight.ui.paintingBounds
 import com.paintbymoonlight.ui.theme.Moonlight
 import com.paintbymoonlight.ui.theme.raised
@@ -103,6 +105,7 @@ fun GalleryScreen(
     val fabExpanded by remember { derivedStateOf { !grid.canScrollBackward || grid.lastScrolledBackward } }
     var renaming by remember { mutableStateOf<PaintingMeta?>(null) }
     var deleting by remember { mutableStateOf<PaintingMeta?>(null) }
+    var sending by remember { mutableStateOf<PaintingMeta?>(null) }
     Scaffold(
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
         topBar = {
@@ -142,6 +145,7 @@ fun GalleryScreen(
                         thumbnail = library.thumbnailFile(meta.id),
                         onOpen = { onOpen(meta.id) },
                         onShare = { onShare(meta.id) },
+                        onSend = { sending = meta },
                         onPrint = onPrint?.let { print -> { print(meta.id) } },
                         onRename = { renaming = meta },
                         onDelete = { deleting = meta },
@@ -176,6 +180,7 @@ fun GalleryScreen(
             dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } },
         )
     }
+    sending?.let { meta -> SendTemplateSheet(meta, library) { sending = null } }
 }
 
 private fun countText(paintings: List<PaintingMeta>): String {
@@ -211,6 +216,7 @@ private fun PaintingCard(
     thumbnail: File,
     onOpen: () -> Unit,
     onShare: () -> Unit,
+    onSend: () -> Unit,
     onPrint: (() -> Unit)?,
     onRename: () -> Unit,
     onDelete: () -> Unit,
@@ -277,6 +283,12 @@ private fun PaintingCard(
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Rounded.Edit, null) }, onClick = { menu = false; onRename() })
             DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Rounded.Share, null) }, onClick = { menu = false; onShare() })
+            // Paint by Moonlight, on either platform, opens it as a new painting, blank.
+            DropdownMenuItem(
+                text = { Text("Send Template…") },
+                leadingIcon = { Icon(Icons.AutoMirrored.Rounded.Send, null) },
+                onClick = { menu = false; onSend() },
+            )
             if (onPrint != null) {
                 DropdownMenuItem(text = { Text("Print it big") }, leadingIcon = { Icon(Icons.Rounded.Print, null) }, onClick = { menu = false; onPrint() })
             }

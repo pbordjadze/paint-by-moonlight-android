@@ -28,6 +28,7 @@ data class PaintingMeta(
     val id: String,
     val title: String,
     val created: Long,
+    /** The Painting Length it was made for; empty for a painting someone sent. */
     val length: String,
     /** Seeds the pipeline and the paints' nicknames. */
     val seed: Long,
@@ -46,6 +47,8 @@ data class PaintingMeta(
     val updated: Long = 0,
     /** Width over height of the painting; 0 in a meta saved before it was recorded. */
     val aspect: Float = 0f,
+    /** The SHA-256 (hex) of the `.moonlight` file it was received from, so opening it again opens it (SharedPaintings.kt). */
+    val receivedDigest: String? = null,
 )
 
 /** A painting's progress file exists but couldn't be read, or doesn't fit its template; it is left untouched. */
@@ -112,13 +115,14 @@ class Library(context: Context) {
 
     fun folder(id: String) = File(root, id)
 
-    suspend fun add(meta: PaintingMeta, template: ByteArray, photo: Bitmap, thumbnail: Bitmap): PaintingMeta {
+    /** [photo] is null for a painting someone sent without theirs. */
+    suspend fun add(meta: PaintingMeta, template: ByteArray, photo: Bitmap?, thumbnail: Bitmap): PaintingMeta {
         awaitLoaded()
         return withContext(Dispatchers.IO) {
             writes.withLock {
                 val dir = folder(meta.id).apply { mkdirs() }
                 File(dir, TEMPLATE).writeAtomically(template)
-                File(dir, PHOTO).writeAtomically { photo.compress(Bitmap.CompressFormat.JPEG, 88, it) }
+                photo?.let { p -> File(dir, PHOTO).writeAtomically { p.compress(Bitmap.CompressFormat.JPEG, 88, it) } }
                 File(dir, THUMB).writeAtomically { thumbnail.compress(Bitmap.CompressFormat.PNG, 100, it) }
                 File(dir, META).writeAtomically(json.encodeToString(meta).toByteArray())
                 _paintings.value = listOf(meta) + _paintings.value.filter { it.id != meta.id }
