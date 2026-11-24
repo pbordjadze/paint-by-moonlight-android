@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Builds the native core (core/: PaintCore + the JNI bridge) for Android with Swift's Android
-# SDK and lays each ABI's libraries into app/src/main/jniLibs/<abi>/: libMoonlightCore.so, the
-# Swift runtime libraries it needs (followed through their own NEEDED entries) and the NDK's
-# libc++_shared.so.
+# SDK and lays each ABI's libraries into app/src/main/jniLibs/<abi>/: libMoonlightCore.so, with
+# the Swift runtime and FoundationEssentials linked in statically (one library to load, and the
+# linker keeps only what the core reaches: about 5 MB less per ABI than the runtime's own .so
+# files, docs/release.md › Size), and the NDK's libc++_shared.so. Any runtime library still
+# NEEDED is followed and copied too.
 #
 #   scripts/build-core.sh [debug|release] [abi …]      (ABIs: arm64-v8a x86_64; default both)
 #
@@ -32,7 +34,7 @@ for abi in "${ABIS[@]}"; do
     *) echo "unknown ABI $abi" >&2; exit 1 ;;
   esac
   scratch="$ROOT/build/swift/$abi"
-  (cd "$ROOT/core" && swift build -c "$CONFIG" --swift-sdk "$arch-unknown-linux-android$API" --scratch-path "$scratch")
+  (cd "$ROOT/core" && swift build -c "$CONFIG" --swift-sdk "$arch-unknown-linux-android$API" --scratch-path "$scratch" --static-swift-stdlib)
   products="$scratch/$CONFIG"
   out="$ROOT/app/src/main/jniLibs/$abi"
   probe="$ROOT/build/core/$abi"
