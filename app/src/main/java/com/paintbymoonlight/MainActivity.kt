@@ -27,6 +27,8 @@ import com.paintbymoonlight.print.BigSheetScreen
 import com.paintbymoonlight.print.BigSheetViewModel
 import com.paintbymoonlight.ui.create.CreateScreen
 import com.paintbymoonlight.ui.create.CreateViewModel
+import com.paintbymoonlight.ui.exchange.ReceivePainting
+import com.paintbymoonlight.ui.exchange.openedFile
 import com.paintbymoonlight.ui.gallery.GalleryScreen
 import com.paintbymoonlight.ui.paint.PaintScreen
 import com.paintbymoonlight.ui.paint.PaintViewModel
@@ -42,9 +44,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         val app = application as MoonlightApp
+        // A painting someone sent, opened once: not again when the activity is restored.
+        val opened = if (savedInstanceState == null) openedFile(intent) else null
         setContent {
             MoonlightTheme {
-                MoonlightNav(app)
+                MoonlightNav(app, opened)
             }
         }
     }
@@ -61,7 +65,7 @@ private object Routes {
 }
 
 @Composable
-private fun MoonlightNav(app: MoonlightApp) {
+private fun MoonlightNav(app: MoonlightApp, opened: Uri?) {
     val nav = rememberNavController()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -71,6 +75,8 @@ private fun MoonlightNav(app: MoonlightApp) {
         if (uri != null) nav.navigate(Routes.create(uri))
     }
     val share: (String) -> Unit = { id -> scope.launch { sharePainting(context, library, id) } }
+
+    ReceivePainting(opened, library, app.contentResolver) { id -> nav.navigate(Routes.paint(id)) }
 
     NavHost(navController = nav, startDestination = Routes.GALLERY) {
         composable(Routes.GALLERY) {
