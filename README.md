@@ -30,6 +30,9 @@ native Jetpack Compose (Material 3 Expressive).
   `scripts/emulator-tour.sh` runs the probe and the app's tour on an emulator.
 - CI (`.github/workflows/android.yml`) builds everything, checks the emulator makes the host's
   template byte for byte, and keeps the tour's screenshots and the APK as the run's artifact.
+- `baselineprofile/`: the journey that makes the app's baseline profile and the macrobenchmarks
+  that measure it (the Profile workflow). Releasing on Google Play, the upload key, versions and
+  sizes: `docs/release.md` (the Release workflow).
 
 ## Building
 

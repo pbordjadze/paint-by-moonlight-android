@@ -25,7 +25,12 @@ let package = Package(
             swiftSettings: [.unsafeFlags(["-O"], .when(configuration: .debug))]
         ),
         // JNI entry points, in C: they copy Java arrays in and out and call MoonlightCore's C ABI.
-        .target(name: "CMoonlightJNI"),
+        // They're all the library exports (exports.map), which lets the linker drop what they never reach.
+        .target(
+            name: "CMoonlightJNI",
+            exclude: ["exports.map"],
+            linkerSettings: [.unsafeFlags(["-Xlinker", "--version-script=\(Context.packageDirectory)/Sources/CMoonlightJNI/exports.map"], .when(platforms: [.android]))]
+        ),
         // LZFSE, the compression of a `.moonlight` file's template (Exchange.swift): Apple's
         // reference implementation (BSD-3-Clause, its LICENSE beside it), the files of
         // github.com/lzfse/lzfse's src/ at e634ca58b4821d9f3d560cdc6df5dec02ffc93fd, unchanged
