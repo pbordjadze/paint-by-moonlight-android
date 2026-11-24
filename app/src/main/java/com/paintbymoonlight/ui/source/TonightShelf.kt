@@ -34,6 +34,9 @@ import com.paintbymoonlight.data.Library
 import com.paintbymoonlight.pictures.Pictures
 import com.paintbymoonlight.pictures.Sample
 import com.paintbymoonlight.pictures.SampleLibrary
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import java.time.ZoneId
 
 /**
@@ -74,17 +77,20 @@ fun TonightShelf(library: Library, onPaint: (Sample) -> Unit, onMore: () -> Unit
             }
         }
         // A tile shows once its picture is read, never as a blank card under a caption; the shelf
-        // waits for all of them, so its row doesn't fill in one by one.
-        val pictures by produceState<Map<String, ImageBitmap>?>(null, shown) {
-            value = null
-            value = shown.mapNotNull { sample -> Pictures.tile(context, sample)?.let { sample.id to it.asImageBitmap() } }.toMap()
+        // reads its pictures together and shows them at once, so its row doesn't fill in one by
+        // one, and keeps the row it has (a resize, another night) until the new one is read.
+        val row by produceState<ShelfRow?>(null, shown, earlier) {
+            val pictures = coroutineScope {
+                shown.map { sample -> async { Pictures.tile(context, sample)?.let { sample.id to it.asImageBitmap() } } }.awaitAll()
+            }.filterNotNull().toMap()
+            value = ShelfRow(shown.filter { it.id in pictures }, pictures, earlier, tonight = shown.firstOrNull()?.takeIf { !earlier })
         }
-        val ready = pictures ?: return@BoxWithConstraints
-        val tiles = shown.filter { it.id in ready }
+        val ready = row ?: return@BoxWithConstraints
+        val tiles = ready.tiles
         if (tiles.isEmpty()) return@BoxWithConstraints
         Column(Modifier.padding(top = 18.dp)) {
             Text(
-                if (earlier) "Earlier Nights" else "Tonight’s Picture",
+                if (ready.earlier) "Earlier Nights" else "Tonight’s Picture",
                 style = MaterialTheme.typography.headlineSmall,
                 modifier = Modifier.padding(start = 4.dp, bottom = 14.dp).semantics { heading() },
             )
@@ -94,9 +100,9 @@ fun TonightShelf(library: Library, onPaint: (Sample) -> Unit, onMore: () -> Unit
                     if (sample == null) {
                         Spacer(Modifier.weight(1f))
                     } else {
-                        val isTonight = i == 0 && !earlier && sample == shown.first()
+                        val isTonight = sample == ready.tonight
                         SampleTile(
-                            sample, onClick = { onPaint(sample) }, modifier = Modifier.weight(1f), image = ready[sample.id],
+                            sample, onClick = { onPaint(sample) }, modifier = Modifier.weight(1f), image = ready.pictures[sample.id],
                             state = if (isTonight) "Tonight’s Picture" else null,
                             badge = { if (isTonight) TonightMoon() },
                         )
@@ -113,6 +119,9 @@ fun TonightShelf(library: Library, onPaint: (Sample) -> Unit, onMore: () -> Unit
         }
     }
 }
+
+/** The shelf's row as read: the pictures that loaded, whether they are the earlier nights, and tonight's among them. */
+private class ShelfRow(val tiles: List<Sample>, val pictures: Map<String, ImageBitmap>, val earlier: Boolean, val tonight: Sample?)
 
 /** The gallery holds only a few paintings: room for the nights after tonight. */
 private const val FEW_PAINTINGS = 4

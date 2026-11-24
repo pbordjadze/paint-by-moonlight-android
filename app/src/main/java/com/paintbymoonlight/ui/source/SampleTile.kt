@@ -70,8 +70,10 @@ fun SampleTile(
     image: ImageBitmap? = null,
 ) {
     val context = LocalContext.current
+    // Set anew for each picture, so a tile handed another sample never keeps the last one's.
     val read by produceState(image, sample.id, image) {
-        if (value == null) value = Pictures.tile(context, sample)?.asImageBitmap()
+        value = image
+        if (image == null) value = Pictures.tile(context, sample)?.asImageBitmap()
     }
     val picture = read
     val press = remember { MutableInteractionSource() }
