@@ -7,7 +7,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -90,15 +90,16 @@ private fun Burst(celebrate: Boolean, modifier: Modifier) {
 fun FinishedActions(onShare: () -> Unit, onPrint: (() -> Unit)?, modifier: Modifier = Modifier) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
         modifier = modifier.navigationBarsPadding().padding(horizontal = 20.dp, vertical = 16.dp),
     ) {
-        OutlinedButton(onClick = onShare, modifier = Modifier.weight(1f).height(56.dp)) {
+        OutlinedButton(onClick = onShare, modifier = Modifier.weight(1f).heightIn(min = 56.dp)) {
             Icon(Icons.Rounded.Share, null, Modifier.size(ButtonDefaults.IconSize))
             Spacer(Modifier.width(ButtonDefaults.IconSpacing))
             Text("Share")
         }
         if (onPrint != null) {
-            Button(onClick = onPrint, modifier = Modifier.weight(1.4f).height(56.dp)) {
+            Button(onClick = onPrint, modifier = Modifier.weight(1.4f).heightIn(min = 56.dp)) {
                 Icon(Icons.Rounded.Print, null, Modifier.size(ButtonDefaults.IconSize))
                 Spacer(Modifier.width(ButtonDefaults.IconSpacing))
                 Text("Print it big")

@@ -8,6 +8,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import com.paintbymoonlight.ui.paintingBounds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,7 +31,9 @@ import java.util.Date
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -186,6 +189,8 @@ private fun Painting(
     var finishedHere by remember { mutableStateOf(false) }
     var finishedAt by remember { mutableStateOf<Long?>(null) }
     var zenNote by remember { mutableIntStateOf(0) }
+    var headingHeight by remember { mutableIntStateOf(0) }
+    var actionsHeight by remember { mutableIntStateOf(0) }
     // A tap that painted nothing, so a second one close by and soon is a double tap (iOS's
     // zoom step). A tap that paints is never held back waiting to see whether a second follows.
     val lastMiss = remember { arrayOfNulls<Pair<Long, Offset>>(1) }
@@ -404,13 +409,19 @@ private fun Painting(
                     )
                 }
             }
-            // Finished, the painting is fitted above the room the heading and the actions take,
-            // all on the one paper, the actions floating at the foot.
+            // Finished, the painting is fitted above the room the heading and the actions take
+            // (as measured, so it grows with the text size), all on the one paper, the actions
+            // floating at the foot. Until they are measured, a guess at the default text size.
             val navigation = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-            val reserve = if (complete) FINISHED_ROOM + navigation else 0.dp
+            val room = if (headingHeight > 0 && actionsHeight > 0) {
+                with(LocalDensity.current) { (headingHeight + actionsHeight).toDp() } + FINISHED_GAP * 2
+            } else {
+                FINISHED_ROOM * LocalDensity.current.fontScale + navigation
+            }
+            val reserve by animateDpAsState(if (complete) room else 0.dp, MaterialTheme.motionScheme.defaultSpatialSpec(), label = "room")
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().background(paper)) {
                 val limit = with(LocalDensity.current) { (maxHeight - reserve).toPx() }
-                val gap = with(LocalDensity.current) { 12.dp.toPx() }
+                val gap = with(LocalDensity.current) { FINISHED_GAP.toPx() }
                 Box(Modifier.fillMaxSize().padding(bottom = reserve).then(paintingBounds(model.id, RectangleShape))) {
                     PaintCanvas(
                         session = session,
@@ -465,7 +476,7 @@ private fun Painting(
                         celebrate = finishedHere,
                         // Just under the painting as the camera holds it, never below the room left for it.
                         top = { min(camera.offset.y + scene.height * camera.scale, limit) + gap },
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).onSizeChanged { headingHeight = it.height },
                     )
                 }
                 // The plain AnimatedVisibility: the column's own can't be called from inside this box.
@@ -474,10 +485,11 @@ private fun Painting(
                     modifier = Modifier.align(Alignment.BottomCenter),
                     enter = slideInVertically { it } + fadeIn(MaterialTheme.motionScheme.slowEffectsSpec()),
                 ) {
-                    FinishedActions(onShare = onShare, onPrint = onPrint, modifier = Modifier.fillMaxWidth())
+                    FinishedActions(onShare = onShare, onPrint = onPrint, modifier = Modifier.fillMaxWidth().onSizeChanged { actionsHeight = it.height })
                 }
             }
-            AnimatedVisibility(!complete, enter = fadeIn(), exit = slideOutVertically { it } + fadeOut()) {
+            // Shrinking as it goes, so the canvas grows into its room rather than jumping.
+            AnimatedVisibility(!complete, enter = fadeIn() + expandVertically(), exit = shrinkVertically() + fadeOut()) {
                 Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 2.dp) {
                     PaletteBar(
                         session = session,
@@ -661,8 +673,14 @@ private fun ProgressBadge(fraction: Float) {
     }
 }
 
-/** The room under a finished painting for its heading and the floating actions, above the navigation bar. */
+/**
+ * The room under a finished painting for its heading and the floating actions, above the
+ * navigation bar, at the default text size: a first guess until they are measured.
+ */
 private val FINISHED_ROOM = 136.dp
+
+/** Between the painting and Finished!, and between Finished! and the actions. */
+private val FINISHED_GAP = 12.dp
 
 /** A stroke under way: where its brush last was (canvas units), and whether it finished a color. */
 private class Stroking {
