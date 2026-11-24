@@ -22,6 +22,7 @@ import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -136,8 +137,19 @@ class AppTour {
         File(shots, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
-    private fun waitFor(matcher: SemanticsMatcher, millis: Long = 20_000) =
-        compose.waitUntil(millis) { compose.onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty() }
+    /** Waits for a node; one that never comes leaves a shot of the screen as it was, for the report. */
+    private fun waitFor(matcher: SemanticsMatcher, millis: Long = 20_000) {
+        try {
+            compose.waitUntil(millis) { compose.onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty() }
+        } catch (e: ComposeTimeoutException) {
+            instrumentation.uiAutomation.takeScreenshot()?.let { save("zz-missing-${matcher.description.take(40)}", it) }
+            compose.onRoot(useUnmergedTree = true).printToLog("AppTour")
+            throw e
+        }
+    }
+
+    /** New painting, whether the button shows its words or, collapsed, only its icon. */
+    private val newPainting = hasText("New painting") or hasContentDescription("New painting")
 
     private fun card(title: String) = hasContentDescription(title, substring = true)
     private val canvas = SemanticsMatcher.expectValue(SemanticsProperties.ContentDescription, listOf("Painting canvas"))
@@ -253,8 +265,8 @@ class AppTour {
     @Test
     fun h_paintPage() {
         ensurePaintings()
-        waitFor(hasText("New painting"), 10_000)
-        compose.onNode(hasText("New painting")).performClick()
+        waitFor(newPainting, 10_000)
+        compose.onNode(newPainting).performClick()
         waitFor(hasText("Your Own"))
         shoot("14-paint-page")
         compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText("Picture credits"))
@@ -268,8 +280,8 @@ class AppTour {
     @Test
     fun i_tonightsPicture() {
         val tonight = Pictures.tonight(app) ?: error("no Tonight's Picture")
-        waitFor(hasText("New painting"), 10_000)
-        compose.onNode(hasText("New painting")).performClick()
+        waitFor(newPainting, 10_000)
+        compose.onNode(newPainting).performClick()
         waitFor(hasContentDescription(tonight.label))
         compose.onAllNodes(hasContentDescription(tonight.label)).onFirst().performClick()
         waitFor(hasContentDescription(tonight.title))
@@ -291,8 +303,8 @@ class AppTour {
             Log.i("AppTour", "the museum's catalog didn't come: ${e.message}")
         }
         if (museum.state.value !is MuseumLibrary.State.Ready) museum.use(tourCatalog())
-        waitFor(hasText("New painting"), 10_000)
-        compose.onNode(hasText("New painting")).performClick()
+        waitFor(newPainting, 10_000)
+        compose.onNode(newPainting).performClick()
         waitFor(hasContentDescription("Museum", substring = true))
         compose.onNode(hasContentDescription("Museum", substring = true)).performClick()
         waitFor(hasText("Artists, titles, years"))
