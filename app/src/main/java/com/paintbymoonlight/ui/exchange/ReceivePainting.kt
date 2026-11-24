@@ -28,7 +28,8 @@ import kotlinx.coroutines.launch
  * intent that first opened it again.
  */
 fun openedFile(intent: Intent?): Uri? = if (intent == null || intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) null else when (intent.action) {
-    Intent.ACTION_VIEW -> intent.data
+    // A file's; the app's own links (outside/Links.kt) are the NavHost's.
+    Intent.ACTION_VIEW -> intent.data?.takeIf { it.scheme == "content" || it.scheme == "file" }
     Intent.ACTION_SEND -> IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
     else -> null
 }

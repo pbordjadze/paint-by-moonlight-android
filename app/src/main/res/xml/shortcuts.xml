@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The launcher's fixed shortcut; Continue, of the painting in progress, is dynamic (OutsideDesk).
+  targetPackage is the applicationId (app/build.gradle.kts), which differs from the namespace.
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="new"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_new"
+        android:shortcutShortLabel="@string/shortcut_new"
+        android:shortcutLongLabel="@string/shortcut_new">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="paintbymoonlight://new"
+            android:targetPackage="com.pbordjadze.paintbymoonlight"
+            android:targetClass="com.paintbymoonlight.MainActivity" />
+    </shortcut>
+</shortcuts>

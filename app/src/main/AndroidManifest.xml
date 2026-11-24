@@ -51,7 +51,22 @@
                 <data android:pathPattern=".*\\..*\\.moonlight" />
                 <data android:pathPattern=".*\\..*\\..*\\.moonlight" />
             </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
+        <!-- Painting in Progress, the home-screen widget (outside/PaintingWidget.kt). -->
+        <receiver
+            android:name=".outside.PaintingWidgetReceiver"
+            android:exported="true"
+            android:label="Painting in Progress">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/painting_widget_info" />
+        </receiver>
         <!-- Google Pay for One Big Sheet (print/GooglePay.kt). -->
         <meta-data
             android:name="com.google.android.gms.wallet.api.enabled"
