@@ -91,6 +91,17 @@ jobs:
           (cd core && swift build -c release --product moonlight-probe --scratch-path ../build/swift/host)
           build/swift/host/release/moonlight-probe parrots.ppm relaxed | tee host-probe.txt
 
+      # The coloring book: the photo's two maps from the app's own line models (tools/edges.py,
+      # LiteRT's CPU kernels, as the app runs them), then the probe paints it as the app does.
+      - name: The coloring book on the host
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet "ai-edge-litert==2.3.0" numpy
+          python3 tools/edges.py parrots.ppm maps
+          build/swift/host/release/moonlight-probe parrots.ppm relaxed --contours maps/contours.pgm --drawing maps/drawing.pgm | tee host-book.txt
+          grep -q "^valid true" host-book.txt
+          grep -q "lines coloringBook" host-book.txt
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -126,6 +137,7 @@ jobs:
           path: |
             out/
             host-probe.txt
+            host-book.txt
             app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: warn
 
@@ -136,7 +148,7 @@ jobs:
         run: |
           set -euo pipefail
           [ -d out ] || exit 0
-          cp host-probe.txt out/ 2>/dev/null || true
+          cp host-probe.txt host-book.txt out/ 2>/dev/null || true
           git init -q --bare "$RUNNER_TEMP/shots.git"
           export GIT_DIR="$RUNNER_TEMP/shots.git" GIT_WORK_TREE="$PWD/out"
           git add -A

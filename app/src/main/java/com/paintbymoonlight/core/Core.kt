@@ -1,5 +1,6 @@
 package com.paintbymoonlight.core
 
+import android.content.Context
 import android.graphics.Bitmap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -21,21 +22,30 @@ class Made(val template: ByteArray, val settingsJson: String)
 object Core {
     val pipelineVersion: Int by lazy { NativeCore.pipelineVersion() }
 
+    /** The application, whose assets hold the line models; until attached, paintings are classic. */
+    @Volatile private var context: Context? = null
+
+    fun attach(application: Context) {
+        context = application.applicationContext
+    }
+
     /**
      * Makes a painting from [photo] as the iOS app makes a new one: Auto's settings for
-     * [length], beauty paint. Cancelling the coroutine stops the pipeline; [onProgress] gets
-     * 0…1 on the main thread's dispatcher of the caller.
+     * [length], beauty paint, and the coloring book from the line models and what ML Kit finds
+     * ([Findings]), or a classic painting when the models can't run. Cancelling the coroutine
+     * stops the work; [onProgress] gets 0…1 on the main thread's dispatcher of the caller.
      */
     suspend fun make(photo: Bitmap, length: PaintingLength, onProgress: (Float) -> Unit = {}): Made =
         coroutineScope {
             val rgba = withContext(Dispatchers.Default) { rgbaBytes(photo) }
+            val findings = context?.let { Findings.find(it, photo, rgba) { p -> onProgress(FINDING * p) } } ?: Findings()
             val job = NativeCore.jobNew()
             // Reports progress while the pipeline runs, and cancels it when this coroutine is
             // cancelled: a child is cancelled at once, while the blocking call below runs on.
             val watcher = launch {
                 try {
                     while (true) {
-                        onProgress(NativeCore.jobProgress(job))
+                        onProgress(FINDING + (1 - FINDING) * NativeCore.jobProgress(job))
                         delay(50)
                     }
                 } finally {
@@ -44,7 +54,7 @@ object Core {
             }
             try {
                 val result = withContext(Dispatchers.Default) {
-                    NativeCore.make(job, rgba, photo.width, photo.height, length.ordinal)
+                    NativeCore.make(job, rgba, photo.width, photo.height, length.ordinal, findings.encoded())
                 }
                 onProgress(1f)
                 Made(result[0], result[1].decodeToString())
@@ -55,6 +65,9 @@ object Core {
                 NativeCore.jobFree(job)
             }
         }
+
+    /** The share of the progress bar the line models and ML Kit take: on a phone, about as long as the pipeline. */
+    private const val FINDING = 0.5f
 
     /** The nickname vocabulary a new painting records (PaintCore's `ColorNickname.currentVersion`). */
     const val NICKNAME_VERSION = 2

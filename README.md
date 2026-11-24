@@ -11,9 +11,15 @@ native Jetpack Compose (Material 3 Expressive).
   revision in `core/Package.swift`), a C ABI (`MoonlightCore/CABI.swift`), the JNI glue
   (`CMoonlightJNI`) and `moonlight-probe`, which makes a painting from a PPM photo on the command
   line and prints its hash.
-- `app/`: the app. `core/` (Kotlin) is the bridge (`Core`, `Scene`), `data/` the library on disk,
+- `app/`: the app. `core/` (Kotlin) is the bridge (`Core`, `Scene`) and what the app finds in a
+  photo before the core paints it (`Findings`: the coloring book's two line models, run with
+  LiteRT by `EdgeModels`, and ML Kit's faces, subjects and text), `data/` the library on disk,
   `ui/` the screens, `print/` One Big Sheet (the template printed full size through the iOS
   app's print relay, `feedback-relay/print.js` in paint-by-number, paid with Google Pay).
+- `app/src/main/assets/models/`: the line models (HED and Informative Drawings, the iOS app's),
+  converted by `tools/models/convert.py` (its docstring is their provenance; credits and
+  licenses in `ACKNOWLEDGEMENTS.md`). `tools/edges.py` makes a photo's two maps on the host as
+  the app does, for `moonlight-probe <photo.ppm> --contours … --drawing …`, the coloring book.
 - `scripts/build-core.sh` builds the core for each ABI into `app/src/main/jniLibs/`;
   `scripts/emulator-tour.sh` runs the probe and the app's tour on an emulator.
 - CI (`.github/workflows/android.yml`) builds everything, checks the emulator makes the host's
