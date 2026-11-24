@@ -44,28 +44,38 @@ jobs:
             exit 0
           fi
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.jks"
-          echo "MOONLIGHT_UPLOAD_STORE_FILE=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
+          echo "store=$RUNNER_TEMP/upload.jks" >> "$GITHUB_OUTPUT"
           echo "name=signed" >> "$GITHUB_OUTPUT"
 
       - name: Build the bundle
         env:
           VERSION_CODE: ${{ inputs.version_code }}
+          # Only this step sees the key, so no later Gradle call can sign or rebuild with it.
+          MOONLIGHT_UPLOAD_STORE_FILE: ${{ steps.key.outputs.store }}
           MOONLIGHT_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_STORE_PASSWORD }}
           MOONLIGHT_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
           MOONLIGHT_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           [ -n "$VERSION_CODE" ] || unset VERSION_CODE
+          [ -n "$MOONLIGHT_UPLOAD_STORE_FILE" ] || unset MOONLIGHT_UPLOAD_STORE_FILE
           ./gradlew --console=plain :app:bundleRelease
-          rm -f "$RUNNER_TEMP/upload.jks"
-          aab=app/build/outputs/bundle/release/app-release.aab
-          if [ "${{ steps.key.outputs.name }}" = signed ]; then
-            keytool -printcert -jarfile "$aab" | tee cert.txt
-            if grep -q "CN=Android Debug" cert.txt; then echo "::error::signed with a debug key"; exit 1; fi
-          fi
 
+      - name: Remove the upload key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/upload.jks"
+
+      # Sizes the bundle just built; :app:bundleSize never rebuilds it.
       - name: Sizes
         run: scripts/sizes.sh | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: The bundle's signature
+        if: steps.key.outputs.name == 'signed'
+        run: |
+          set -euo pipefail
+          keytool -printcert -jarfile app/build/outputs/bundle/release/app-release.aab | tee cert.txt
+          if ! grep -q "^Owner:" cert.txt; then echo "::error::the bundle isn't signed"; exit 1; fi
+          if grep -q "CN=Android Debug" cert.txt; then echo "::error::signed with a debug key"; exit 1; fi
 
       - uses: actions/upload-artifact@v4
         with:

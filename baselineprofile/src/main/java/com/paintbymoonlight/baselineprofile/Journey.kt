@@ -2,15 +2,21 @@ package com.paintbymoonlight.baselineprofile
 
 import androidx.benchmark.macro.MacrobenchmarkScope
 import androidx.test.uiautomator.By
+import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.Direction
+import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
 
 const val PACKAGE = "com.pbordjadze.paintbymoonlight"
 private const val WAIT = 20_000L
 
-/** Paints the library the journey opens (the app's BenchmarkSeed); at once once it's there. */
-fun MacrobenchmarkScope.seedLibrary() {
+/**
+ * Paints the library the journey opens (the app's BenchmarkSeed); at once once it's there. Called
+ * once before a rule runs, never inside one, so making paintings stays out of the profiles.
+ */
+fun seedLibrary() {
+    val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
     val result = device.executeShellCommand("content call --uri content://$PACKAGE.benchmarkseed --method seed")
     check("Result: Bundle" in result) { "the benchmark build didn't seed its library: $result" }
 }

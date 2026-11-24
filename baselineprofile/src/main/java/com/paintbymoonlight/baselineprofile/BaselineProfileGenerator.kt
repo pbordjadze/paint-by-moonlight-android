@@ -2,6 +2,7 @@ package com.paintbymoonlight.baselineprofile
 
 import androidx.benchmark.macro.junit4.BaselineProfileRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -16,9 +17,11 @@ class BaselineProfileGenerator {
     @get:Rule
     val rule = BaselineProfileRule()
 
+    @Before
+    fun seed() = seedLibrary()
+
     @Test
     fun generate() = rule.collect(packageName = PACKAGE, includeInStartupProfile = true) {
-        seedLibrary()
         pressHome()
         startActivityAndWait()
         waitForGallery()

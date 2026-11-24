@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # What the app costs a phone, as Markdown: Play's download size per ABI for the release bundle
-# (`./gradlew :app:bundleSize`: bundletool's get-size over the split APKs Play would serve), and
-# each ABI's native libraries as installed (stored uncompressed, so also their bytes on disk).
+# already built (`./gradlew :app:bundleRelease` first; `:app:bundleSize` is bundletool's get-size
+# over the split APKs Play would serve, and never rebuilds the bundle), and each ABI's native
+# libraries as installed (stored uncompressed, so also their bytes on disk).
 #
 #   scripts/sizes.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 AAB="$ROOT/app/build/outputs/bundle/release/app-release.aab"
+[[ -f "$AAB" ]] || { echo "no $AAB: ./gradlew :app:bundleRelease first" >&2; exit 1; }
 sizes="$("$ROOT/gradlew" -p "$ROOT" --console=plain -q :app:bundleSize)"
 
 echo "### app-release.aab: $(( $(stat -c %s "$AAB") / 1024 )) KiB"

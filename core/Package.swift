@@ -29,7 +29,7 @@ let package = Package(
         .target(
             name: "CMoonlightJNI",
             exclude: ["exports.map"],
-            linkerSettings: [.unsafeFlags(["-Xlinker", "--version-script=\(Context.packageDirectory)/Sources/CMoonlightJNI/exports.map"])]
+            linkerSettings: [.unsafeFlags(["-Xlinker", "--version-script=\(Context.packageDirectory)/Sources/CMoonlightJNI/exports.map"], .when(platforms: [.android]))]
         ),
         // A libc++ function the Android runtime needs and the NDK lacks (hash_memory.c).
         .target(name: "CxxHashMemory"),

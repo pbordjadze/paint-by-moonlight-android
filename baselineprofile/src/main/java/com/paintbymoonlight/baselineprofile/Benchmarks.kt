@@ -7,6 +7,7 @@ import androidx.benchmark.macro.StartupMode
 import androidx.benchmark.macro.StartupTimingMetric
 import androidx.benchmark.macro.junit4.MacrobenchmarkRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -21,6 +22,9 @@ class Benchmarks {
     @get:Rule
     val rule = MacrobenchmarkRule()
 
+    @Before
+    fun seed() = seedLibrary()
+
     @Test fun startupWithoutProfile() = startup(CompilationMode.None())
     @Test fun startupWithProfile() = startup(CompilationMode.Partial(BaselineProfileMode.Require))
     @Test fun paintingWithoutProfile() = painting(CompilationMode.None())
@@ -32,7 +36,6 @@ class Benchmarks {
         compilationMode = compilation,
         startupMode = StartupMode.COLD,
         iterations = 10,
-        setupBlock = { seedLibrary() },
     ) {
         startActivityAndWait()
         waitForGallery()
@@ -45,7 +48,6 @@ class Benchmarks {
         startupMode = StartupMode.WARM,
         iterations = 5,
         setupBlock = {
-            seedLibrary()
             pressHome()
             startActivityAndWait()
             waitForGallery()

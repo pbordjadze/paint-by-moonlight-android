@@ -8,15 +8,26 @@ plugins {
 // The upload key (docs/release.md): CI writes the keystore from its secrets and names it here.
 // Without one, a release build is signed with the debug key on a developer's machine (to install
 // for a look) and left unsigned on CI, so nothing debug-signed can reach Play.
-val uploadStore = System.getenv("MOONLIGHT_UPLOAD_STORE_FILE")?.let(::file)?.takeIf { it.isFile }
+val uploadStore = System.getenv("MOONLIGHT_UPLOAD_STORE_FILE")?.takeIf { it.isNotEmpty() }?.let(::file)?.also {
+    if (!it.isFile) throw GradleException("MOONLIGHT_UPLOAD_STORE_FILE names no file: $it")
+}
 val onCI = System.getenv("CI") == "true"
 
 // versionCode: the number of commits on HEAD, which only grows along main, where releases are
-// made from (a full clone; VERSION_CODE overrides it). versionName: gradle.properties.
-val commitCount = providers.exec {
-    commandLine("git", "rev-list", "--count", "HEAD")
+// made from (a full clone; VERSION_CODE overrides it). An upload-signed build never falls back
+// to 1: without the count, or in a shallow clone, it stops. versionName: gradle.properties.
+fun git(vararg args: String) = providers.exec {
+    commandLine("git", *args)
     isIgnoreExitValue = true
-}.standardOutput.asText.map { it.trim().toIntOrNull() ?: 1 }
+}.standardOutput.asText.map { it.trim() }
+val versionCodeFromGit: Int by lazy {
+    val count = git("rev-list", "--count", "HEAD").get().toIntOrNull()
+    val shallow = git("rev-parse", "--is-shallow-repository").get() != "false"
+    if (uploadStore != null && (count == null || shallow)) {
+        throw GradleException("versionCode: a release signed for Play needs the full history (git fetch --unshallow) or VERSION_CODE")
+    }
+    count ?: 1
+}
 
 android {
     namespace = "com.paintbymoonlight"
@@ -28,7 +39,7 @@ android {
         applicationId = "com.pbordjadze.paintbymoonlight"
         minSdk = 29
         targetSdk = 37
-        versionCode = System.getenv("VERSION_CODE")?.toInt() ?: commitCount.get()
+        versionCode = System.getenv("VERSION_CODE")?.toInt() ?: versionCodeFromGit
         versionName = providers.gradleProperty("moonlight.versionName").get()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
@@ -116,14 +127,14 @@ dependencies {
     androidTestImplementation(libs.androidx.test.uiautomator)
 }
 
-// Play's download size per ABI of the release bundle (bundletool's get-size over the split APKs
-// Play would serve): `./gradlew :app:bundleSize`, which scripts/sizes.sh reports.
+// Play's download size per ABI of the release bundle already built (bundletool's get-size over the
+// split APKs Play would serve): `./gradlew :app:bundleSize`, which scripts/sizes.sh reports. It
+// never builds the bundle itself, so sizing a signed bundle can't replace it.
 val bundletool = configurations.create("bundletool")
 dependencies { bundletool(libs.bundletool) }
 val releaseBundle = layout.buildDirectory.file("outputs/bundle/release/app-release.aab")
 val releaseApks = layout.buildDirectory.file("outputs/sizes/app-release.apks")
 val bundleApks = tasks.register<JavaExec>("bundleApks") {
-    dependsOn("bundleRelease")
     classpath = bundletool
     mainClass = "com.android.tools.build.bundletool.BundleToolMain"
     inputs.file(releaseBundle)

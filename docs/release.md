@@ -61,10 +61,11 @@ history), which only grows along `main`, so release from `main`. Play refuses a 
 already seen: to release again from the same commit, give the workflow a higher one
 (`version_code`).
 
-**On your own machine.** `./gradlew :app:bundleRelease` signs with the debug key, so the build
-installs for a look; Play refuses it. To sign with the upload key, set
+**On your own machine.** Without the upload key set, `./gradlew :app:bundleRelease` signs with
+the debug key, so the build installs for a look; Play refuses it. To sign with the upload key, set
 `MOONLIGHT_UPLOAD_STORE_FILE` (the `.jks`'s path), `MOONLIGHT_UPLOAD_STORE_PASSWORD`,
-`MOONLIGHT_UPLOAD_KEY_ALIAS` and `MOONLIGHT_UPLOAD_KEY_PASSWORD`. On CI (`CI=true`) a release
+`MOONLIGHT_UPLOAD_KEY_ALIAS` and `MOONLIGHT_UPLOAD_KEY_PASSWORD`; such a build needs the full
+history or `VERSION_CODE`, and stops rather than number itself 1. On CI (`CI=true`) a release
 without the key is left unsigned, never debug-signed.
 
 ## Shrinking
@@ -84,10 +85,11 @@ interpreting them on the first runs; the startup profile also lays them out firs
 `baselineprofile/` holds the journey that makes it (`BaselineProfileGenerator`: launch, the
 gallery, Parrots opened, panned, zoomed, an area tapped, back) and the macrobenchmarks that
 measure it (`Benchmarks`: cold start to the gallery, and the painting's frames, each without and
-with the profile). Both run on the benchmark builds the plugin adds, which are the release build
-signed with the debug key; those builds (and only those) also carry `BenchmarkSeed`
-(`app/src/benchmarkSeed/`), which paints the journey's two paintings on the device, since a
-release build's library can't be written from outside.
+with the profile). Both run on the benchmark builds the plugin adds: the release build, signed
+as it is (with the debug key when no upload key is set). Those builds, and only those, also
+carry `BenchmarkSeed` (`app/src/benchmarkSeed/`), which paints the journey's two paintings on
+the device, since a release build's library can't be written from outside. The journey seeds
+once before each test, outside what's recorded, so making paintings stays out of the profiles.
 
 To make it again after the launch, the gallery or the painting screen change: Actions ›
 **Profile** › Run workflow (it builds the core first, so allow an hour). Its summary has the benchmarks' table; then
@@ -108,8 +110,8 @@ FoundationEssentials into `libMoonlightCore.so` statically, so each ABI ships tw
 core and the NDK's `libc++_shared.so`) instead of fifteen, and only the parts the core reaches;
 the library exports only its JNI entry points (`core/Sources/CMoonlightJNI/exports.map`). Both are
 linked for 16 KB pages, which Play requires of apps targeting Android 15 and later.
-`scripts/sizes.sh` prints Play's download size per ABI for the release bundle (bundletool's
-`get-size`, through `./gradlew :app:bundleSize`) and each ABI's native libraries.
+`scripts/sizes.sh` prints Play's download size per ABI for the release bundle already built
+(bundletool's `get-size`, through `./gradlew :app:bundleSize`) and each ABI's native libraries.
 
 Measured November 24, 2026 (release bundle, before the baseline profile):
 
