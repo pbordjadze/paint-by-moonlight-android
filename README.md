@@ -12,7 +12,8 @@ native Jetpack Compose (Material 3 Expressive).
   (`CMoonlightJNI`) and `moonlight-probe`, which makes a painting from a PPM photo on the command
   line and prints its hash.
 - `app/`: the app. `core/` (Kotlin) is the bridge (`Core`, `Scene`), `data/` the library on disk,
-  `ui/` the screens.
+  `ui/` the screens, `print/` One Big Sheet (the template printed full size through the iOS
+  app's print relay, `feedback-relay/print.js` in paint-by-number, paid with Google Pay).
 - `scripts/build-core.sh` builds the core for each ABI into `app/src/main/jniLibs/`;
   `scripts/emulator-tour.sh` runs the probe and the app's tour on an emulator.
 - CI (`.github/workflows/android.yml`) builds everything, checks the emulator makes the host's
