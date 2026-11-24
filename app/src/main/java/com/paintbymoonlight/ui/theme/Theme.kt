@@ -27,7 +27,7 @@ object Moonlight {
     val sheetInk = Color(0xFF8E8A93)
 }
 
-private val light = lightColorScheme(
+internal val LightColors = lightColorScheme(
     primary = Moonlight.nightshade,
     onPrimary = Color.White,
     primaryContainer = Color(0xFFFFD6F9),
@@ -55,7 +55,7 @@ private val light = lightColorScheme(
     outlineVariant = Color(0xFFD0C3CD),
 )
 
-private val dark = darkColorScheme(
+internal val DarkColors = darkColorScheme(
     primary = Color(0xFFF0B0EE),
     onPrimary = Color(0xFF4C0E50),
     primaryContainer = Color(0xFF662868),
@@ -104,7 +104,7 @@ val NumeralFamily = FontFamily.Serif
 @Composable
 fun MoonlightTheme(darkTheme: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
     MaterialExpressiveTheme(
-        colorScheme = if (darkTheme) dark else light,
+        colorScheme = if (darkTheme) DarkColors else LightColors,
         motionScheme = MotionScheme.expressive(),
         typography = typography,
         content = content,

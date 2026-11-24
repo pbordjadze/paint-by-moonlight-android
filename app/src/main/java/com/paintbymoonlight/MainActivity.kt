@@ -13,6 +13,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
@@ -20,9 +21,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navDeepLink
 import com.paintbymoonlight.core.Core
 import com.paintbymoonlight.data.Library
 import com.paintbymoonlight.data.Thumbnails
+import com.paintbymoonlight.outside.Links
 import com.paintbymoonlight.print.BigSheetScreen
 import com.paintbymoonlight.print.BigSheetViewModel
 import com.paintbymoonlight.ui.create.CreateScreen
@@ -54,6 +57,7 @@ private object Routes {
     const val GALLERY = "gallery"
     const val CREATE = "create?photo={photo}"
     const val PAINT = "paint/{id}"
+    const val NEW = "new"
     const val PRINT = "print/{id}"
     fun create(photo: Uri) = "create?photo=${Uri.encode(photo.toString())}"
     fun paint(id: String) = "paint/$id"
@@ -96,7 +100,14 @@ private fun MoonlightNav(app: MoonlightApp) {
                 },
             )
         }
-        composable(Routes.PAINT) { entry ->
+        // The launcher's New Painting shortcut and the empty widget: the photo picker over the gallery.
+        composable(Routes.NEW, deepLinks = listOf(navDeepLink { uriPattern = Links.NEW })) {
+            LaunchedEffect(Unit) {
+                pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                nav.popBackStack()
+            }
+        }
+        composable(Routes.PAINT, deepLinks = listOf(navDeepLink { uriPattern = Links.PAINT_PATTERN })) { entry ->
             val id = entry.arguments?.getString("id") ?: return@composable
             val model = viewModel { PaintViewModel(library, id) }
             PaintScreen(
