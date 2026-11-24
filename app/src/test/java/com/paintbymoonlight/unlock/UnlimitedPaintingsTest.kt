@@ -88,8 +88,26 @@ class UnlimitedPaintingsTest {
     }
 
     @Test
-    fun playTakingTooLongDoesNotHoldUpAFreePainting() = runBlocking {
+    fun aFreePaintingLeftStartsWithoutAskingPlay() = runBlocking {
+        // A Play that never answers would hold the test up: it isn't asked.
         val paintings = paintings(Store(owned = false, hangs = true))
+        assertTrue(paintings.mayStart())
+    }
+
+    @Test
+    fun withNoneLeftPlayTakingTooLongAnswersWithWhatItSaidBefore() = runBlocking {
+        val none = FreePaintings(0, now)
+        assertFalse(paintings(Store(owned = false, hangs = true), UnlockMemory.inMemory(none)).mayStart())
+        assertTrue(paintings(Store(owned = false, hangs = true), UnlockMemory.inMemory(none, owned = true)).mayStart())
+    }
+
+    @Test
+    fun withNoneLeftPlayIsAskedOnce() = runBlocking {
+        val store = Store(owned = true)
+        val paintings = paintings(store, UnlockMemory.inMemory(FreePaintings(0, now)))
+        assertTrue(paintings.mayStart())
+        store.owned = false
+        // Asked once a launch; later answers come with the foreground's refresh.
         assertTrue(paintings.mayStart())
     }
 

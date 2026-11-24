@@ -1,6 +1,7 @@
 package com.paintbymoonlight.unlock
 
 import android.content.Context
+import androidx.core.content.edit
 import java.time.Instant
 
 /** What the device remembers between launches: the free paintings' count and whether the unlock was owned when Play last answered. */
@@ -29,15 +30,16 @@ private class PreferencesMemory(context: Context) : UnlockMemory {
             if (prefs.contains(SINCE)) Instant.ofEpochMilli(prefs.getLong(SINCE, 0)) else null,
         )
         set(value) {
-            prefs.edit().putInt(LEFT, value.left).apply {
+            prefs.edit {
+                putInt(LEFT, value.left)
                 val since = value.since
                 if (since != null) putLong(SINCE, since.toEpochMilli()) else remove(SINCE)
-            }.apply()
+            }
         }
 
     override var owned: Boolean
         get() = prefs.getBoolean(OWNED, false)
-        set(value) { prefs.edit().putBoolean(OWNED, value).apply() }
+        set(value) { prefs.edit { putBoolean(OWNED, value) } }
 
     private companion object {
         const val LEFT = "freePaintings.left"

@@ -1,7 +1,6 @@
 package com.paintbymoonlight.unlock
 
 import java.time.Instant
-import java.time.LocalDate
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 
@@ -26,8 +25,8 @@ class FreePaintings(left: Int = MOST, since: Instant? = null) {
     fun at(now: Instant, zone: ZoneId): FreePaintings {
         val since = since
         if (left >= MOST || since == null) return FreePaintings()
-        val today = LocalDate.ofInstant(now, zone)
-        val first = LocalDate.ofInstant(since, zone)
+        val today = now.atZone(zone).toLocalDate()
+        val first = since.atZone(zone).toLocalDate()
         if (first > today) return FreePaintings()
         val days = ChronoUnit.DAYS.between(first, today)
         if (days <= 0) return this
@@ -38,7 +37,7 @@ class FreePaintings(left: Int = MOST, since: Instant? = null) {
     fun take(now: Instant, zone: ZoneId): FreePaintings? {
         val current = at(now, zone)
         if (current.left == 0) return null
-        return FreePaintings(current.left - 1, current.since ?: LocalDate.ofInstant(now, zone).atStartOfDay(zone).toInstant())
+        return FreePaintings(current.left - 1, current.since ?: now.atZone(zone).toLocalDate().atStartOfDay(zone).toInstant())
     }
 
     override fun equals(other: Any?) = other is FreePaintings && other.left == left && other.since == since

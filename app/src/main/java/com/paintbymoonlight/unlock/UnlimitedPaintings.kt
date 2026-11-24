@@ -53,12 +53,13 @@ class UnlimitedPaintings(
 
     /**
      * Whether a new painting may start: once the unlock is bought or while a free painting is
-     * left. The first time, it asks Play what is owned, waiting a moment at most: Play out of
-     * reach answers with what it said before.
+     * left, at once. With none left and Play not yet asked this launch, it asks what is owned,
+     * waiting a moment at most: Play out of reach answers with what it said before.
      */
     suspend fun mayStart(): Boolean {
+        if (_unlocked.value || left() > 0) return true
         if (!checked) withTimeoutOrNull(FIRST_CHECK_MS) { refresh() }
-        return _unlocked.value || left() > 0
+        return _unlocked.value
     }
 
     /** A new painting was saved: it took a free painting, unless the unlock is bought. */

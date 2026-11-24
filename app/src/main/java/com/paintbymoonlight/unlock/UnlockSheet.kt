@@ -219,7 +219,7 @@ fun UnlockContent(paintings: UnlimitedPaintings, onNotNow: suspend () -> Unit, m
             }
             Spacer(Modifier.height(6.dp))
             Text(
-                "Paid once. No ads, no subscription.",
+                FOOTNOTE,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -227,6 +227,9 @@ fun UnlockContent(paintings: UnlimitedPaintings, onNotNow: suspend () -> Unit, m
         }
     }
 }
+
+/** What stays free, or what the purchase is not, under the sheet's buttons. */
+private const val FOOTNOTE = "Paid once. No ads, no subscription."
 
 /** The app's crescent in gold with two of the Moon's stars, as the iOS sheet draws them. */
 @Composable

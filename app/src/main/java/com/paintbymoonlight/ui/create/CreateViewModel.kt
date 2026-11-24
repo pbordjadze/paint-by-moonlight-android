@@ -20,6 +20,7 @@ import com.paintbymoonlight.unlock.UnlimitedPaintings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -94,8 +95,11 @@ class CreateViewModel(
                     aspect = scene.width / scene.height,
                 )
                 val thumb = withContext(Dispatchers.Default) { Thumbnails.render(scene, Progress(scene.regions.size)) }
-                library.add(meta, result.template, bitmap, thumb)
-                paintings.started()
+                // Saved and counted together: a Back or Cancel now can't leave a painting saved but not counted.
+                withContext(NonCancellable) {
+                    library.add(meta, result.template, bitmap, thumb)
+                    paintings.started()
+                }
                 made = meta.id
             } catch (e: CancellationException) {
                 throw e
