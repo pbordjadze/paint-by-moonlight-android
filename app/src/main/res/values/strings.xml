@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Paint by Moonlight</string>
+    <string name="widget_description">Your painting in progress, as it stands. Tap it to keep painting.</string>
+    <string name="shortcut_new">New painting</string>
 </resources>

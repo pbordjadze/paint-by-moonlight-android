@@ -1,0 +1,77 @@
+# The baseline profile and the macrobenchmarks, on request (Run workflow): builds the core, then
+# on an x86_64 emulator runs scripts/profile.sh, which generates the app's baseline and startup
+# profiles from the journey in baselineprofile/ and measures cold start and the painting's frames
+# without and with the profile. The table goes to the run's summary; the profiles, the JSON and
+# the table are the run's artifact and a commit on refs/ci-shots/<branch>-profile, from which a
+# session commits the profiles (docs/release.md › Baseline profile). Kept out of android.yml so
+# every push stays as fast as it was.
+name: Profile
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: profile-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/core
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Built before the emulator boots, so its minutes go to the journey and the measuring.
+      - name: Build the benchmark builds
+        run: ./gradlew --console=plain :app:assembleNonMinifiedRelease :app:assembleBenchmarkRelease :baselineprofile:assemble
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Profile and measure on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_7
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: scripts/profile.sh out
+
+      - name: Summary
+        if: always()
+        run: cat out/summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: profile-${{ github.sha }}
+          path: out/
+          if-no-files-found: warn
+
+      - name: Publish to refs/ci-shots
+        if: always()
+        run: |
+          set -euo pipefail
+          [ -d out ] || exit 0
+          git init -q --bare "$RUNNER_TEMP/shots.git"
+          export GIT_DIR="$RUNNER_TEMP/shots.git" GIT_WORK_TREE="$PWD/out"
+          git add -A
+          git -c user.name=ci -c user.email=ci@localhost commit -qm "Profile for ${GITHUB_SHA} (run ${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT})"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/ci-shots/${GITHUB_REF_NAME}-profile"

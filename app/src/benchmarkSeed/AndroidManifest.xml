@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Benchmark builds only: `adb shell content call` paints the macrobenchmarks' library. -->
+        <provider
+            android:name=".BenchmarkSeed"
+            android:authorities="${applicationId}.benchmarkseed"
+            android:exported="true" />
+    </application>
+</manifest>
