@@ -110,7 +110,8 @@ fun PaintCanvas(
     val scene = session.scene
     val density = LocalDensity.current.density
     val node = remember { RenderNode("fills").apply { setPosition(0, 0, scene.width.toInt() + 1, scene.height.toInt() + 1) } }
-    var recordedFor by remember { mutableStateOf(-1L) }
+    // No key, so the first frame records (a finished painting holds no paint: its key is -1).
+    var recordedFor by remember { mutableStateOf<Long?>(null) }
     var revealing by remember { mutableStateOf<Int?>(null) }
     var revealFrom by remember { mutableStateOf(Offset.Zero) }
     val reveal = remember { Animatable(1f) }
