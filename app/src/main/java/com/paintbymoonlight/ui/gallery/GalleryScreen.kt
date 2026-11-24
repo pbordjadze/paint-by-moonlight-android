@@ -94,6 +94,7 @@ fun GalleryScreen(
     onOpen: (String) -> Unit,
     onShare: (String) -> Unit,
     onPrint: ((String) -> Unit)?,
+    onPrintPages: (String) -> Unit,
     onRename: (String, String) -> Unit,
     onDelete: (String) -> Unit,
 ) {
@@ -147,6 +148,7 @@ fun GalleryScreen(
                         onShare = { onShare(meta.id) },
                         onSend = { sending = meta },
                         onPrint = onPrint?.let { print -> { print(meta.id) } },
+                        onPrintPages = { onPrintPages(meta.id) },
                         onRename = { renaming = meta },
                         onDelete = { deleting = meta },
                         modifier = Modifier.animateItem(),
@@ -218,6 +220,7 @@ private fun PaintingCard(
     onShare: () -> Unit,
     onSend: () -> Unit,
     onPrint: (() -> Unit)?,
+    onPrintPages: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
@@ -283,6 +286,7 @@ private fun PaintingCard(
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Rounded.Edit, null) }, onClick = { menu = false; onRename() })
             DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Rounded.Share, null) }, onClick = { menu = false; onShare() })
+            DropdownMenuItem(text = { Text("Print…") }, leadingIcon = { Icon(Icons.Rounded.Print, null) }, onClick = { menu = false; onPrintPages() })
             // Paint by Moonlight, on either platform, opens it as a new painting, blank.
             DropdownMenuItem(
                 text = { Text("Send Template…") },
