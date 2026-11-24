@@ -1,0 +1,77 @@
+# The native core for Android, as every workflow needs it: PaintCore checked out at the revision
+# core/Package.swift pins (into paint-by-number/, with its corpus photos for the probe), Swift with
+# its Android SDK and the NDK (cached), and scripts/build-core.sh's release build of both ABIs into
+# app/src/main/jniLibs/. Leaves swift on PATH and ANDROID_NDK_HOME, MOONLIGHT_PAINTCORE_PATH set.
+name: Native core
+description: Builds libMoonlightCore and its runtime for arm64-v8a and x86_64.
+
+inputs:
+  swift-version:
+    default: 6.4.3
+  swift-android-sdk-checksum:
+    default: a78839edf4ec161e03b9f1e22a0ef94e565ece3f3ce5c03e3c79246c6b71f0a9
+  ndk-version:
+    default: r29
+
+runs:
+  using: composite
+  steps:
+    - name: PaintCore's revision
+      id: core
+      shell: bash
+      run: |
+        echo "rev=$(sed -n 's/.*revision: "\([0-9a-f]*\)".*/\1/p' core/Package.swift)" >> "$GITHUB_OUTPUT"
+        echo "SWIFT_VERSION=${{ inputs.swift-version }}" >> "$GITHUB_ENV"
+        echo "SWIFT_ANDROID_SDK_CHECKSUM=${{ inputs.swift-android-sdk-checksum }}" >> "$GITHUB_ENV"
+        echo "NDK_VERSION=${{ inputs.ndk-version }}" >> "$GITHUB_ENV"
+        echo "MOONLIGHT_PAINTCORE_PATH=$GITHUB_WORKSPACE/paint-by-number" >> "$GITHUB_ENV"
+
+    # PaintCore from its own checkout (MOONLIGHT_PAINTCORE_PATH), at the pinned revision: the
+    # same code SwiftPM would fetch, and its corpus photos for the probe.
+    - uses: actions/checkout@v4
+      with:
+        repository: pbordjadze/paint-by-number
+        ref: ${{ steps.core.outputs.rev }}
+        path: paint-by-number
+        sparse-checkout: |
+          Package.swift
+          Sources
+          Tests/Corpus
+          Tests/PaintCoreTests/Fixtures
+
+    - name: Cache toolchains
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/toolchains
+          ~/.swiftpm/swift-sdks
+          ~/.config/swiftpm
+        key: toolchains-swift-${{ inputs.swift-version }}-ndk-${{ inputs.ndk-version }}
+
+    - name: Install Swift, its Android SDK and the NDK
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p ~/toolchains && cd ~/toolchains
+        if [ ! -d swift ]; then
+          curl -fsSL -o swift.tar.gz "https://download.swift.org/swift-${SWIFT_VERSION}-release/ubuntu2404/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE-ubuntu24.04.tar.gz"
+          mkdir swift && tar xzf swift.tar.gz -C swift --strip-components=1 && rm swift.tar.gz
+        fi
+        if [ ! -d "android-ndk-${NDK_VERSION}" ]; then
+          curl -fsSL -o ndk.zip "https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip"
+          unzip -q ndk.zip && rm ndk.zip
+        fi
+        echo "$HOME/toolchains/swift/usr/bin" >> "$GITHUB_PATH"
+        echo "ANDROID_NDK_HOME=$HOME/toolchains/android-ndk-${NDK_VERSION}" >> "$GITHUB_ENV"
+        export PATH="$HOME/toolchains/swift/usr/bin:$PATH"
+        if ! swift sdk list | grep -q _android; then
+          swift sdk install "https://download.swift.org/swift-${SWIFT_VERSION}-release/android-sdk/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE_android.artifactbundle.tar.gz" --checksum "$SWIFT_ANDROID_SDK_CHECKSUM"
+        fi
+        # Where SwiftPM keeps installed SDKs differs between hosts (~/.swiftpm, ~/.config/swiftpm, …).
+        setup=$(find "$HOME" -path "*swift-${SWIFT_VERSION}-RELEASE_android.artifactbundle/swift-android/scripts/setup-android-sdk.sh" -print -quit)
+        ANDROID_NDK_HOME="$HOME/toolchains/android-ndk-${NDK_VERSION}" bash "$setup"
+        swift --version
+
+    - name: Build the core for Android
+      shell: bash
+      run: scripts/build-core.sh release arm64-v8a x86_64

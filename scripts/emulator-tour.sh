@@ -15,6 +15,8 @@ PKG=com.pbordjadze.paintbymoonlight
 mkdir -p "$OUT"
 abi="$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
 echo "device ABI: $abi"
+# The emulator's launcher ANR dialog covered every screenshot.
+adb shell settings put global hide_error_dialogs 1
 
 # 1. The core alone.
 adb shell rm -rf /data/local/tmp/core

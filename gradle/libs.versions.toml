@@ -15,6 +15,14 @@ uiautomator = "2.4.1"
 playServicesWallet = "19.5.0"
 composePayButton = "1.2.0"
 billing = "8.3.0"
+glance = "1.2.0"
+litert = "2.3.2"
+mlkitFaces = "17.1.0"
+mlkitSubjects = "16.0.0-beta1"
+mlkitText = "19.0.1"
+benchmark = "1.5.0"
+profileInstaller = "1.4.1"
+bundletool = "1.18.3"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -37,12 +45,24 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 play-services-wallet = { module = "com.google.android.gms:play-services-wallet", version.ref = "playServicesWallet" }
 compose-pay-button = { module = "com.google.pay.button:compose-pay-button", version.ref = "composePayButton" }
 play-billing = { module = "com.android.billingclient:billing-ktx", version.ref = "billing" }
+glance-appwidget = { module = "androidx.glance:glance-appwidget", version.ref = "glance" }
+glance-material3 = { module = "androidx.glance:glance-material3", version.ref = "glance" }
+glance-appwidget-testing = { module = "androidx.glance:glance-appwidget-testing", version.ref = "glance" }
+litert = { module = "com.google.ai.edge.litert:litert", version.ref = "litert" }
+mlkit-faces = { module = "com.google.android.gms:play-services-mlkit-face-detection", version.ref = "mlkitFaces" }
+mlkit-subjects = { module = "com.google.android.gms:play-services-mlkit-subject-segmentation", version.ref = "mlkitSubjects" }
+mlkit-text = { module = "com.google.android.gms:play-services-mlkit-text-recognition", version.ref = "mlkitText" }
+androidx-profileinstaller = { module = "androidx.profileinstaller:profileinstaller", version.ref = "profileInstaller" }
+androidx-benchmark-macro-junit4 = { module = "androidx.benchmark:benchmark-macro-junit4", version.ref = "benchmark" }
+bundletool = { module = "com.android.tools.build:bundletool", version.ref = "bundletool" }
 junit = { module = "junit:junit", version.ref = "junit" }
 androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidxTestRunner" }
 androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "androidxTestExt" }
 androidx-test-uiautomator = { module = "androidx.test.uiautomator:uiautomator", version.ref = "uiautomator" }
 
 [plugins]
+android-test = { id = "com.android.test", version.ref = "agp" }
+baselineprofile = { id = "androidx.baselineprofile", version.ref = "benchmark" }
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

@@ -1,0 +1,9 @@
+/* libMoonlightCore.so exports its JNI entry points and nothing else, so the linker's
+   --gc-sections can drop the parts of PaintCore and the static Swift runtime the app never calls
+   (core/Package.swift). */
+{
+  global:
+    Java_com_paintbymoonlight_core_NativeCore_*;
+  local:
+    *;
+};

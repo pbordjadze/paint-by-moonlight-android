@@ -14,3 +14,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "PaintByMoonlight"
 include(":app")
+include(":baselineprofile")

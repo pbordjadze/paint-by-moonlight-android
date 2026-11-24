@@ -20,6 +20,7 @@ import com.paintbymoonlight.core.SharedPainting
 import com.paintbymoonlight.data.ReceiveException
 import com.paintbymoonlight.data.SharedPaintings
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -89,7 +90,8 @@ class ExchangeTest {
         assertEquals(-7L, back.nicknameSeed)
         assertEquals(2, back.nicknameVersion)
         assertArrayEquals(jpeg, back.photo)
-        assertEquals(made.settingsJson, back.settingsJson)
+        // Swift's JSONEncoder writes keys in no fixed order, so the settings are compared as JSON.
+        assertEquals(Json.parseToJsonElement(made.settingsJson), Json.parseToJsonElement(back.settingsJson))
 
         val bare = SharedPainting.read(SharedPainting.write(made.template, "Lighthouse", made.settingsJson, null, 1, 2))
         assertNull(bare.photo)
