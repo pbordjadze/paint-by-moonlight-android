@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -165,7 +166,8 @@ private fun CurrentPaint(session: PaintSession, metrics: SwatchMetrics, modifier
     if (paint !in session.scene.paints.indices) return
     val p = session.scene.paints[paint]
     Row(
-        modifier.height(24.dp * metrics.scale - 8.dp).clearAndSetSemantics {
+        // No fixed height: a fixed one clipped the name's descenders.
+        modifier.heightIn(min = 24.dp * metrics.scale - 8.dp).clearAndSetSemantics {
             contentDescription = "Current color: ${p.spoken(paint)}"
         },
         verticalAlignment = Alignment.CenterVertically,

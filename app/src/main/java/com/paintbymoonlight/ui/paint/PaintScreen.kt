@@ -8,34 +8,22 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import com.paintbymoonlight.ui.paintingBounds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import java.io.File
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
-import androidx.compose.foundation.Canvas
 import androidx.compose.material.icons.outlined.SelfImprovement
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.IconToggleButton
-import androidx.compose.material3.MaterialShapes
-import androidx.compose.material3.toPath
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Matrix
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.rotate
-import androidx.compose.ui.graphics.drawscope.scale
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.graphics.shapes.Morph
-import com.paintbymoonlight.ui.theme.Moonlight
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import java.text.DateFormat
@@ -43,9 +31,16 @@ import java.util.Date
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -114,8 +109,9 @@ import kotlinx.coroutines.launch
  * The painting screen: the canvas under a slim top bar (Back, the title and how far along,
  * Hint, Zen, Undo, More) and the palette along the bottom. The canvas opens where the painter
  * left it, or filling the screen for a new painting; a double tap on it shows the whole
- * painting. When the last area is painted the ring bursts into gold, the Finished bar takes
- * the palette's place and the camera eases out to the whole painting above it.
+ * painting. When the last area is painted the palette leaves, the camera eases out to the whole
+ * painting, the gold burst and Finished! come in just under it and Share and Print it big float
+ * at the foot.
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -193,6 +189,8 @@ private fun Painting(
     var finishedHere by remember { mutableStateOf(false) }
     var finishedAt by remember { mutableStateOf<Long?>(null) }
     var zenNote by remember { mutableIntStateOf(0) }
+    var headingHeight by remember { mutableIntStateOf(0) }
+    var actionsHeight by remember { mutableIntStateOf(0) }
     // A tap that painted nothing, so a second one close by and soon is a double tap (iOS's
     // zoom step). A tap that paints is never held back waiting to see whether a second follows.
     val lastMiss = remember { arrayOfNulls<Pair<Long, Offset>>(1) }
@@ -359,7 +357,6 @@ private fun Painting(
                 title = state.meta.title,
                 fraction = session.let { it.changes; it.fraction },
                 complete = complete,
-                celebrate = finishedHere,
                 finishedOn = state.meta.finished ?: finishedAt,
                 zen = preferences.zenMode,
                 canUndo = session.let { it.changes; it.canUndo },
@@ -370,98 +367,129 @@ private fun Painting(
                     if (preferences.zenMode) zenNote++
                 },
                 onUndo = ::undo,
-                onMore = { menu = true },
-            )
-            Box(Modifier.weight(1f).fillMaxWidth().then(paintingBounds(model.id, RectangleShape))) {
-                PaintCanvas(
-                    session = session,
-                    camera = camera,
-                    motion = motion,
-                    placement = {
-                        val saved = session.progress.view
-                        when {
-                            session.isComplete -> fitting(scene.width, scene.height, inset)
-                            saved != null -> restoring(saved, scene.width, scene.height, inset)
-                            else -> filling(scene.width, scene.height, inset)
-                        }
+                menu = menu,
+                onMenu = { menu = it },
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Fit to Screen") },
+                    leadingIcon = { Icon(Icons.Rounded.Fullscreen, null) },
+                    onClick = { menu = false; flyToFit() },
+                )
+                DropdownMenuItem(
+                    text = { Text("Sounds") },
+                    leadingIcon = {
+                        Icon(if (preferences.sounds) Icons.AutoMirrored.Rounded.VolumeUp else Icons.AutoMirrored.Rounded.VolumeOff, null)
                     },
-                    darkBackdrop = darkBackdrop,
-                    backdrop = android.graphics.Color.pack(paper.toArgb()),
-                    modifier = Modifier.fillMaxSize(),
-                    stars = { sounds.skyOfComingFill() == Sky.Moon },
-                    stroke = stroke,
-                    onTap = { screen ->
-                        val p = camera.toCanvas(screen)
-                        val now = SystemClock.uptimeMillis()
-                        // A fingertip's reach (14 pt) finds a small area of the paint in hand just beside the tap.
-                        val tap = session.tap(p.x, p.y, tolerance = 14 * density / camera.scale)
-                        when (tap) {
-                            is Tap.Painted -> {
-                                lastMiss[0] = null
-                                painted(listOf(tap))
-                                if (!tap.finishedPainting) glideOn(p, tap.finishedPaint)
+                    trailingIcon = { Switch(checked = preferences.sounds, onCheckedChange = null) },
+                    onClick = { preferences.sounds = !preferences.sounds },
+                    // Said as a switch, on or off; the menu stays open to show it turn.
+                    modifier = Modifier.semantics {
+                        role = Role.Switch
+                        toggleableState = ToggleableState(preferences.sounds)
+                    },
+                )
+                if (complete) {
+                    DropdownMenuItem(
+                        text = { Text("Undo last area") },
+                        leadingIcon = { Icon(Icons.AutoMirrored.Rounded.Undo, null) },
+                        onClick = { menu = false; undo() },
+                    )
+                } else {
+                    DropdownMenuItem(
+                        text = { Text("Share") },
+                        leadingIcon = { Icon(Icons.Rounded.Share, null) },
+                        onClick = { menu = false; onShare() },
+                    )
+                }
+                if (onPrintPages != null) {
+                    DropdownMenuItem(
+                        text = { Text("Print…") },
+                        leadingIcon = { Icon(Icons.Rounded.Print, null) },
+                        onClick = { menu = false; onPrintPages() },
+                    )
+                }
+            }
+            // Finished, the painting is fitted above the room the heading and the actions take
+            // (as measured, so it grows with the text size), all on the one paper, the actions
+            // floating at the foot. Until they are measured, a guess at the default text size.
+            val navigation = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+            val room = if (headingHeight > 0 && actionsHeight > 0) {
+                with(LocalDensity.current) { (headingHeight + actionsHeight).toDp() } + FINISHED_GAP * 2
+            } else {
+                FINISHED_ROOM * LocalDensity.current.fontScale + navigation
+            }
+            val reserve by animateDpAsState(if (complete) room else 0.dp, MaterialTheme.motionScheme.defaultSpatialSpec(), label = "room")
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().background(paper)) {
+                val limit = with(LocalDensity.current) { (maxHeight - reserve).toPx() }
+                val gap = with(LocalDensity.current) { FINISHED_GAP.toPx() }
+                Box(Modifier.fillMaxSize().padding(bottom = reserve).then(paintingBounds(model.id, RectangleShape))) {
+                    PaintCanvas(
+                        session = session,
+                        camera = camera,
+                        motion = motion,
+                        placement = {
+                            val saved = session.progress.view
+                            when {
+                                session.isComplete -> fitting(scene.width, scene.height, inset)
+                                saved != null -> restoring(saved, scene.width, scene.height, inset)
+                                else -> filling(scene.width, scene.height, inset)
                             }
-                            else -> {
-                                val miss = lastMiss[0]
-                                if (miss != null && now - miss.first <= 300 && (screen - miss.second).getDistance() <= 40 * density) {
+                        },
+                        darkBackdrop = darkBackdrop,
+                        backdrop = android.graphics.Color.pack(paper.toArgb()),
+                        modifier = Modifier.fillMaxSize(),
+                        stars = { sounds.skyOfComingFill() == Sky.Moon },
+                        stroke = stroke,
+                        onTap = { screen ->
+                            val p = camera.toCanvas(screen)
+                            val now = SystemClock.uptimeMillis()
+                            // A fingertip's reach (14 pt) finds a small area of the paint in hand just beside the tap.
+                            val tap = session.tap(p.x, p.y, tolerance = 14 * density / camera.scale)
+                            when (tap) {
+                                is Tap.Painted -> {
                                     lastMiss[0] = null
-                                    val step = camera.stepTarget(screen, camera.deepest(density))
-                                    if (step == null) flyToFit() else fly { camera.travel(step, 0.42f, still) }
-                                } else {
-                                    lastMiss[0] = now to screen
-                                    if (tap is Tap.OtherPaint) {
-                                        shake = tap.paint to ((shake?.second ?: 0) + 1)
-                                        haptics.reject()
-                                        sounds.reject()
+                                    painted(listOf(tap))
+                                    if (!tap.finishedPainting) glideOn(p, tap.finishedPaint)
+                                }
+                                else -> {
+                                    val miss = lastMiss[0]
+                                    if (miss != null && now - miss.first <= 300 && (screen - miss.second).getDistance() <= 40 * density) {
+                                        lastMiss[0] = null
+                                        val step = camera.stepTarget(screen, camera.deepest(density))
+                                        if (step == null) flyToFit() else fly { camera.travel(step, 0.42f, still) }
+                                    } else {
+                                        lastMiss[0] = now to screen
+                                        if (tap is Tap.OtherPaint) {
+                                            shake = tap.paint to ((shake?.second ?: 0) + 1)
+                                            haptics.reject()
+                                            sounds.reject()
+                                        }
                                     }
                                 }
                             }
-                        }
-                    },
-                )
-                ZenNote(zenNote, Modifier.align(Alignment.TopCenter).padding(top = 12.dp))
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, modifier = Modifier.align(Alignment.TopEnd)) {
-                    DropdownMenuItem(
-                        text = { Text("Fit to Screen") },
-                        leadingIcon = { Icon(Icons.Rounded.Fullscreen, null) },
-                        onClick = { menu = false; flyToFit() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Sounds") },
-                        leadingIcon = {
-                            Icon(if (preferences.sounds) Icons.AutoMirrored.Rounded.VolumeUp else Icons.AutoMirrored.Rounded.VolumeOff, null)
-                        },
-                        trailingIcon = { Switch(checked = preferences.sounds, onCheckedChange = null) },
-                        onClick = { preferences.sounds = !preferences.sounds },
-                        // Said as a switch, on or off; the menu stays open to show it turn.
-                        modifier = Modifier.semantics {
-                            role = Role.Switch
-                            toggleableState = ToggleableState(preferences.sounds)
                         },
                     )
-                    if (complete) {
-                        DropdownMenuItem(
-                            text = { Text("Undo last area") },
-                            leadingIcon = { Icon(Icons.AutoMirrored.Rounded.Undo, null) },
-                            onClick = { menu = false; undo() },
-                        )
-                    } else {
-                        DropdownMenuItem(
-                            text = { Text("Share") },
-                            leadingIcon = { Icon(Icons.Rounded.Share, null) },
-                            onClick = { menu = false; onShare() },
-                        )
-                    }
-                    if (onPrintPages != null) {
-                        DropdownMenuItem(
-                            text = { Text("Print…") },
-                            leadingIcon = { Icon(Icons.Rounded.Print, null) },
-                            onClick = { menu = false; onPrintPages() },
-                        )
-                    }
+                    ZenNote(zenNote, Modifier.align(Alignment.TopCenter).padding(top = 12.dp))
+                }
+                if (complete) {
+                    FinishedHeading(
+                        celebrate = finishedHere,
+                        // Just under the painting as the camera holds it, never below the room left for it.
+                        top = { min(camera.offset.y + scene.height * camera.scale, limit) + gap },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).onSizeChanged { headingHeight = it.height },
+                    )
+                }
+                // The plain AnimatedVisibility: the column's own can't be called from inside this box.
+                androidx.compose.animation.AnimatedVisibility(
+                    complete,
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                    enter = slideInVertically { it } + fadeIn(MaterialTheme.motionScheme.slowEffectsSpec()),
+                ) {
+                    FinishedActions(onShare = onShare, onPrint = onPrint, modifier = Modifier.fillMaxWidth().onSizeChanged { actionsHeight = it.height })
                 }
             }
-            AnimatedVisibility(!complete, enter = fadeIn(), exit = slideOutVertically { it } + fadeOut()) {
+            // Shrinking as it goes, so the canvas grows into its room rather than jumping.
+            AnimatedVisibility(!complete, enter = fadeIn() + expandVertically(), exit = shrinkVertically() + fadeOut()) {
                 Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 2.dp) {
                     PaletteBar(
                         session = session,
@@ -480,14 +508,6 @@ private fun Painting(
                         still = still,
                     )
                 }
-            }
-            AnimatedVisibility(complete, enter = slideInVertically { it } + fadeIn(MaterialTheme.motionScheme.slowEffectsSpec())) {
-                FinishedBar(
-                    celebrate = finishedHere,
-                    onShare = onShare,
-                    onPrint = onPrint,
-                    modifier = Modifier.fillMaxWidth(),
-                )
             }
         }
     }
@@ -582,7 +602,6 @@ private fun TopBar(
     title: String,
     fraction: Float,
     complete: Boolean,
-    celebrate: Boolean,
     finishedOn: Long?,
     zen: Boolean,
     canUndo: Boolean,
@@ -590,7 +609,9 @@ private fun TopBar(
     onHint: () -> Unit,
     onZen: () -> Unit,
     onUndo: () -> Unit,
-    onMore: () -> Unit,
+    menu: Boolean,
+    onMenu: (Boolean) -> Unit,
+    menuItems: @Composable ColumnScope.() -> Unit,
 ) {
     Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
         Row(
@@ -598,10 +619,15 @@ private fun TopBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back") }
-            ProgressBadge(fraction, complete, celebrate)
-            Spacer(Modifier.width(10.dp))
+            // Finished, the gold burst is under the painting (FinishedHeading), not here as well.
+            if (!complete) {
+                ProgressBadge(fraction)
+                Spacer(Modifier.width(10.dp))
+            } else {
+                Spacer(Modifier.width(4.dp))
+            }
             Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     when {
                         !complete -> "${(fraction * 100).toInt()}% painted"
@@ -625,48 +651,36 @@ private fun TopBar(
                 }
                 IconButton(onClick = onUndo, enabled = canUndo) { Icon(Icons.AutoMirrored.Rounded.Undo, contentDescription = "Undo") }
             }
-            IconButton(onClick = onMore) { Icon(Icons.Rounded.MoreVert, contentDescription = "More") }
+            // The menu drops from the ⋮ it belongs to.
+            Box {
+                IconButton(onClick = { onMenu(true) }) { Icon(Icons.Rounded.MoreVert, contentDescription = "More") }
+                DropdownMenu(expanded = menu, onDismissRequest = { onMenu(false) }, content = menuItems)
+            }
         }
     }
 }
 
-/**
- * How far along, as a flat ring; once finished, a gold burst. Finishing here morphs the
- * circle into the burst on a bouncy spring.
- */
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+/** How far along, as a flat ring. */
 @Composable
-private fun ProgressBadge(fraction: Float, complete: Boolean, celebrate: Boolean) {
+private fun ProgressBadge(fraction: Float) {
     Box(contentAlignment = Alignment.Center, modifier = Modifier.size(40.dp)) {
-        if (!complete) {
-            CircularProgressIndicator(
-                progress = { fraction },
-                modifier = Modifier.size(34.dp),
-                strokeWidth = 3.dp,
-                gapSize = 2.dp,
-            )
-        } else {
-            val morph = remember { Morph(MaterialShapes.Circle, MaterialShapes.SoftBurst) }
-            val grow = remember { Animatable(if (celebrate) 0f else 1f) }
-            LaunchedEffect(Unit) {
-                if (grow.value < 1f) grow.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessLow))
-            }
-            val path = remember { Path() }
-            val matrix = remember { Matrix() }
-            Canvas(Modifier.size(34.dp).semantics { contentDescription = "Finished" }) {
-                val t = grow.value
-                path.reset()
-                morph.toPath(t.coerceIn(0f, 1f), path)
-                matrix.reset()
-                matrix.scale(size.width, size.height)
-                path.transform(matrix)
-                rotate(90f * (1f - t)) {
-                    scale(0.55f + 0.45f * t) { drawPath(path, Moonlight.gold) }
-                }
-            }
-        }
+        CircularProgressIndicator(
+            progress = { fraction },
+            modifier = Modifier.size(34.dp),
+            strokeWidth = 3.dp,
+            gapSize = 2.dp,
+        )
     }
 }
+
+/**
+ * The room under a finished painting for its heading and the floating actions, above the
+ * navigation bar, at the default text size: a first guess until they are measured.
+ */
+private val FINISHED_ROOM = 136.dp
+
+/** Between the painting and Finished!, and between Finished! and the actions. */
+private val FINISHED_GAP = 12.dp
 
 /** A stroke under way: where its brush last was (canvas units), and whether it finished a color. */
 private class Stroking {

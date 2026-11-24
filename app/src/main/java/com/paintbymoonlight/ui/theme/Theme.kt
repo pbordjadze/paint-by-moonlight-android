@@ -57,9 +57,11 @@ internal val LightColors = lightColorScheme(
     outlineVariant = Color(0xFFD0C3CD),
 )
 
+// Nightshade lifted just enough to read on the dark paper (5.5:1), so the FAB, the main buttons
+// and the text buttons keep the signature color instead of M3's pale pink; ink dark on it (6:1).
 internal val DarkColors = darkColorScheme(
-    primary = Color(0xFFF0B0EE),
-    onPrimary = Color(0xFF4C0E50),
+    primary = Color(0xFFB57BB8),
+    onPrimary = Color(0xFF2A0A2D),
     primaryContainer = Color(0xFF662868),
     onPrimaryContainer = Color(0xFFFFD6F9),
     secondary = Color(0xFFD8BED3),
@@ -119,4 +121,3 @@ fun MoonlightTheme(darkTheme: Boolean = isSystemInDarkTheme(), content: @Composa
         content = content,
     )
 }
-

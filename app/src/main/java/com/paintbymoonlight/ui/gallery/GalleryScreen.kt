@@ -45,7 +45,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.MediumExtendedFloatingActionButton
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.ripple
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LargeFlexibleTopAppBar
@@ -122,13 +122,16 @@ fun GalleryScreen(
             )
         },
         floatingActionButton = {
-            MediumExtendedFloatingActionButton(
+            // The standard size, its label in the sans: serif is for titles and numerals. Named
+            // on the button itself, so it is found and read the same expanded or collapsed.
+            ExtendedFloatingActionButton(
                 text = { Text("New painting") },
-                icon = { Icon(Icons.Rounded.Add, contentDescription = if (fabExpanded) null else "New painting") },
+                icon = { Icon(Icons.Rounded.Add, contentDescription = null) },
                 onClick = onNew,
                 expanded = fabExpanded,
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.semantics { contentDescription = "New painting" },
             )
         },
     ) { padding ->
@@ -276,15 +279,18 @@ private fun PaintingCard(
                 modifier = Modifier.weight(1f),
             )
             Spacer(Modifier.width(8.dp))
-            if (meta.finished != null) {
-                Icon(Icons.Rounded.AutoAwesome, null, tint = Moonlight.gold, modifier = Modifier.size(20.dp))
-            } else {
-                CircularProgressIndicator(
-                    progress = { fraction },
-                    modifier = Modifier.size(22.dp),
-                    strokeWidth = 3.dp,
-                    gapSize = 2.dp,
-                )
+            // One slot for the sparkle and the ring, so finished and unfinished cards' captions match.
+            Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                if (meta.finished != null) {
+                    Icon(Icons.Rounded.AutoAwesome, null, tint = Moonlight.gold, modifier = Modifier.size(20.dp))
+                } else {
+                    CircularProgressIndicator(
+                        progress = { fraction },
+                        modifier = Modifier.size(22.dp),
+                        strokeWidth = 3.dp,
+                        gapSize = 2.dp,
+                    )
+                }
             }
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {

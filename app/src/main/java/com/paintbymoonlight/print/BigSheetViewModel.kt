@@ -35,6 +35,9 @@ class BigSheetViewModel(
         private set
     var scene by mutableStateOf<Scene?>(null)
         private set
+
+    /** A wide painting's sheet is drawn and named long side across. */
+    val isWide: Boolean get() = scene?.let { it.width > it.height } ?: false
     var loadFailed by mutableStateOf(false)
         private set
 

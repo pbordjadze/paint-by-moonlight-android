@@ -40,7 +40,17 @@ if grep -q -v -e '^  ' -e '\.moonlight$' "$OUT/probe-shared.txt" || [[ "$(grep -
   echo "::error::the core here didn't read the iOS app's paintings"; exit 1
 fi
 
-# 2. The app.
+# 2. The app, under SystemUI's demo mode so every shot has the same status bar: a fixed clock,
+# full signal and battery, no notification icons. Left again however the tours end.
+demo() { adb shell am broadcast -a com.android.systemui.demo -e command "$@" >/dev/null; }
+adb shell settings put global sysui_demo_allowed 1
+demo enter
+demo clock -e hhmm 0900
+demo battery -e level 100 -e plugged false
+demo network -e wifi show -e level 4
+demo network -e mobile show -e datatype none -e level 4
+demo notifications -e visible false
+trap 'demo exit || true' EXIT
 "$ROOT/gradlew" -p "$ROOT" --console=plain installDebug installDebugAndroidTest
 adb logcat -c
 set +e
