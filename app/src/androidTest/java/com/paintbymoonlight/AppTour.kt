@@ -159,6 +159,19 @@ class AppTour {
     /** New painting, whether the button shows its words or, collapsed, only its icon. */
     private val newPainting = hasText("New painting") or hasContentDescription("New painting")
 
+    /**
+     * Back to the gallery. A test's activity can come up on the screen an earlier test left
+     * (CI saw One Big Sheet where the gallery should be), so step back until New painting shows.
+     */
+    private fun toGallery() {
+        repeat(4) {
+            compose.waitForIdle()
+            if (compose.onAllNodes(newPainting).fetchSemanticsNodes().isNotEmpty()) return
+            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        }
+        waitFor(newPainting, 10_000)
+    }
+
     private fun card(title: String) = hasContentDescription(title, substring = true)
     private val canvas = SemanticsMatcher.expectValue(SemanticsProperties.ContentDescription, listOf("Painting canvas"))
 
@@ -272,9 +285,9 @@ class AppTour {
     }
 
     @Test
-    fun h_paintPage() {
+    fun da_paintPage() {
         ensurePaintings()
-        waitFor(newPainting, 10_000)
+        toGallery()
         compose.onNode(newPainting).performClick()
         waitFor(hasText("Your Own"))
         shoot("14-paint-page")
@@ -287,9 +300,9 @@ class AppTour {
 
     /** Tonight's Picture picked: the create screen on it, its title and painter under it. */
     @Test
-    fun i_tonightsPicture() {
+    fun db_tonightsPicture() {
         val tonight = Pictures.tonight(app) ?: error("no Tonight's Picture")
-        waitFor(newPainting, 10_000)
+        toGallery()
         compose.onNode(newPainting).performClick()
         waitFor(hasContentDescription(tonight.label))
         compose.onAllNodes(hasContentDescription(tonight.label)).onFirst().performClick()
@@ -303,7 +316,7 @@ class AppTour {
      * if fetched, so the wall, a work's page and Paint This still show.
      */
     @Test
-    fun j_museum() {
+    fun dc_museum() {
         val museum = MuseumLibrary.of(app)
         museum.open()
         try {
@@ -312,7 +325,7 @@ class AppTour {
             Log.i("AppTour", "the museum's catalog didn't come: ${e.message}")
         }
         if (museum.state.value !is MuseumLibrary.State.Ready) museum.use(tourCatalog())
-        waitFor(newPainting, 10_000)
+        toGallery()
         compose.onNode(newPainting).performClick()
         waitFor(hasContentDescription("Museum", substring = true))
         compose.onNode(hasContentDescription("Museum", substring = true)).performClick()
