@@ -16,6 +16,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The Museum's pictures, fetched from the museums' servers: tiles, a work's large picture and the
@@ -30,6 +31,7 @@ class MuseumImages private constructor(private val folder: File) {
     }
     private val connections = Semaphore(6)
     private val inFlight = HashMap<String, Deferred<File>>()
+    private val sinceTrim = AtomicLong()
     /** Fetches that finish whatever asked for them: a tile scrolled away still lands on disk for the way back. */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -45,9 +47,17 @@ class MuseumImages private constructor(private val folder: File) {
         val key = "$url@$maxSide"
         memory.get(key)?.let { return it }
         val file = runCatching { file(url) }.getOrNull() ?: return null
-        return withContext(Dispatchers.Default) {
+        val image = withContext(Dispatchers.Default) {
             runCatching { Pictures.decodeSampled({ file.inputStream() }, maxSide) }.getOrNull()
-        }?.also { memory.put(key, it) }
+        }
+        // A page that answered 200 with something not a picture isn't kept: the next look asks again.
+        if (image == null) forget(url) else memory.put(key, image)
+        return image
+    }
+
+    /** Lets go of [url]'s bytes on disk, which turned out not to be a picture. */
+    fun forget(url: String) {
+        target(url).delete()
     }
 
     /** The bytes at [url] on disk, fetched now if they aren't there yet. */
@@ -59,6 +69,7 @@ class MuseumImages private constructor(private val folder: File) {
                 scope.async {
                     try {
                         connections.withPermit { if (!target.exists()) Net.download(url, target) }
+                        written(target.length())
                         target
                     } finally {
                         synchronized(inFlight) { inFlight.remove(url) }
@@ -84,8 +95,17 @@ class MuseumImages private constructor(private val folder: File) {
         return File(folder, digest)
     }
 
+    /** Counts what was written since the last [trim], and trims again once it passes [TRIM_EVERY]. */
+    private fun written(bytes: Long) {
+        if (sinceTrim.addAndGet(bytes) < TRIM_EVERY) return
+        sinceTrim.set(0)
+        scope.launch { trim() }
+    }
+
+    /** The oldest pictures past [DISK_LIMIT] let go; a download under way (its `.part` file) is left alone. */
+    @Synchronized
     private fun trim() {
-        val files = folder.listFiles()?.filter { it.isFile }?.sortedByDescending { it.lastModified() } ?: return
+        val files = folder.listFiles()?.filter { it.isFile && !it.name.contains(".part") }?.sortedByDescending { it.lastModified() } ?: return
         var total = 0L
         for (f in files) {
             total += f.length()
@@ -95,6 +115,7 @@ class MuseumImages private constructor(private val folder: File) {
 
     companion object {
         private const val DISK_LIMIT = 512L shl 20
+        private const val TRIM_EVERY = 32L shl 20
 
         @Volatile private var shared: MuseumImages? = null
 

@@ -93,7 +93,8 @@ private fun MoonlightNav(app: MoonlightApp, opened: Uri?) {
     var picked by rememberSaveable(stateSaver = Picked.Saver) { mutableStateOf<Picked?>(null) }
     val create = { picture: Picked ->
         picked = picture
-        nav.navigate(Routes.CREATE)
+        // A double tap opens one create screen.
+        nav.navigate(Routes.CREATE) { launchSingleTop = true }
     }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) create(Picked.Photo(uri.toString()))
@@ -112,14 +113,18 @@ private fun MoonlightNav(app: MoonlightApp, opened: Uri?) {
                     CompositionLocalProvider(LocalDestinationTransition provides this) {
                         GalleryScreen(
                             library = library,
-                            onNew = { gate.start { nav.navigate(Routes.SOURCE) } },
+                            onNew = { gate.start { nav.navigate(Routes.SOURCE) { launchSingleTop = true } } },
                             onOpen = { nav.navigate(Routes.paint(it)) },
                             onShare = share,
                             onPrint = { id -> nav.navigate(Routes.print(id)) },
                             onRename = { id, title -> scope.launch { library.rename(id, title) } },
                             onDelete = { id -> scope.launch { library.delete(id) } },
                             shelf = {
-                                TonightShelf(library, onPaint = { create(Picked.Sample(it.id)) }, onMore = { gate.start { nav.navigate(Routes.SOURCE) } })
+                                TonightShelf(
+                                    library,
+                                    onPaint = { sample -> gate.start { create(Picked.Sample(sample.id)) } },
+                                    onMore = { gate.start { nav.navigate(Routes.SOURCE) { launchSingleTop = true } } },
+                                )
                             },
                         )
                     }

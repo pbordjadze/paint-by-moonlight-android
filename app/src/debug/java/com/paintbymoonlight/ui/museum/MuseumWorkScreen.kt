@@ -1,5 +1,6 @@
 package com.paintbymoonlight.ui.museum
 
+import android.content.ActivityNotFoundException
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -70,6 +71,7 @@ import com.paintbymoonlight.ui.create.Picked
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import com.paintbymoonlight.pictures.Pictures
 
 /**
@@ -109,7 +111,6 @@ fun MuseumWorkScreen(id: String, library: Library, onPaint: (Picked) -> Unit, on
                 else Text("This work isn’t in the Museum any more.", modifier = Modifier.align(Alignment.Center).padding(32.dp))
             } else {
                 WorkPage(work, catalog.museums[work.museum].orEmpty(), underWay, onPaint = {
-                    museum.record(work.id)
                     onPaint(Picked.Museum(work.id, work.paintingTitle, work.image))
                 }, onResume = onResume)
             }
@@ -144,8 +145,13 @@ private fun WorkPage(work: MuseumCatalog.Work, museum: String, underWay: String?
             if (picture == null) images.picture(work.thumb, 900)?.let { picture = it.asImageBitmap() }
             try {
                 val file = images.file(work.image)
+                val large = withContext(Dispatchers.Default) { runCatching { Pictures.decodeSampled({ file.inputStream() }, pixels) }.getOrNull() }
+                if (large == null) {
+                    images.forget(work.image)
+                    throw IOException("${work.image} isn't a picture")
+                }
+                picture = large.asImageBitmap()
                 fetched = true
-                withContext(Dispatchers.Default) { Pictures.decodeSampled({ file.inputStream() }, pixels) }?.let { picture = it.asImageBitmap() }
                 if (wantsToPaint) {
                     wantsToPaint = false
                     onPaint()
@@ -173,7 +179,13 @@ private fun WorkPage(work: MuseumCatalog.Work, museum: String, underWay: String?
                         .semantics { contentDescription = work.title; role = Role.Image },
                 )
                 Spacer(Modifier.height(28.dp))
-                Label(work, museum, Modifier.widthIn(max = 680.dp).fillMaxWidth()) { page -> uri.openUri(page) }
+                Label(work, museum, Modifier.widthIn(max = 680.dp).fillMaxWidth()) { page ->
+                    // A phone with no browser to open it says nothing rather than closing the app.
+                    try {
+                        uri.openUri(page)
+                    } catch (_: ActivityNotFoundException) {
+                    }
+                }
                 Spacer(Modifier.height(24.dp))
             }
             Button(

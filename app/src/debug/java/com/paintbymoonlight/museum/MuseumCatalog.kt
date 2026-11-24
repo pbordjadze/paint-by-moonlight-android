@@ -103,15 +103,32 @@ class MuseumCatalog(
             val works: List<Work>,
         )
 
-        /** A catalog from its JSON; a work this build can't use (a kind it doesn't know, a picture not served over HTTPS) is left out. */
+        /** The museums whose servers the pictures may come from, their subdomains included. */
+        val HOSTS = setOf("artic.edu", "clevelandart.org", "nga.gov")
+        private val ID = Regex("[a-z]+-[A-Za-z0-9]+([._-][A-Za-z0-9]+)*")
+
+        /**
+         * A catalog from its JSON, read as hostile input: a work this build can't use (a kind it
+         * doesn't know, an id not of the catalog's pattern, a picture not served over HTTPS by
+         * one of [hosts]) is left out.
+         */
         @OptIn(ExperimentalSerializationApi::class)
-        fun decode(input: InputStream): MuseumCatalog {
+        fun decode(input: InputStream, hosts: Set<String> = HOSTS): MuseumCatalog {
             val file = json.decodeFromStream<File>(input)
-            val works = file.works.filter { it.kind in KINDS && it.thumb.startsWith("https://") && it.image.startsWith("https://") }
+            val works = file.works.filter {
+                it.kind in KINDS && it.id.length <= 64 && ID.matches(it.id) && served(it.thumb, hosts) && served(it.image, hosts)
+            }
             return MuseumCatalog(file.version, file.made, file.museums, file.movements, works)
         }
 
-        fun decode(text: String) = decode(text.byteInputStream())
+        fun decode(text: String, hosts: Set<String> = HOSTS) = decode(text.byteInputStream(), hosts)
+
+        /** An HTTPS address on one of [hosts] or a subdomain of one. */
+        internal fun served(url: String, hosts: Set<String>): Boolean {
+            val uri = runCatching { java.net.URI(url) }.getOrNull() ?: return false
+            val host = uri.host?.lowercase() ?: return false
+            return uri.scheme == "https" && uri.userInfo == null && uri.port == -1 && hosts.any { host == it || host.endsWith(".$it") }
+        }
 
         /** A text's words, case, diacritics and width folded, split at whatever isn't a letter or a number. */
         fun words(text: String): List<String> = fold(text).split { !it.isLetterOrDigit() }

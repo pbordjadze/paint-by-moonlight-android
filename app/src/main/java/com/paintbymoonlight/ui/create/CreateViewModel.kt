@@ -16,9 +16,10 @@ import com.paintbymoonlight.data.Library
 import com.paintbymoonlight.data.PaintingMeta
 import com.paintbymoonlight.data.Progress
 import com.paintbymoonlight.data.Thumbnails
-import com.paintbymoonlight.museum.MuseumImages
-import com.paintbymoonlight.pictures.Nights
+import com.paintbymoonlight.Unreleased
 import com.paintbymoonlight.pictures.Pictures
+import com.paintbymoonlight.pictures.Sample
+import com.paintbymoonlight.ui.source.cameraFolder
 import com.paintbymoonlight.pictures.SampleLibrary
 import com.paintbymoonlight.unlock.UnlimitedPaintings
 import kotlinx.coroutines.CancellationException
@@ -27,6 +28,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -63,7 +65,17 @@ class CreateViewModel(
 
     init {
         viewModelScope.launch {
-            photo = runCatching { withContext(Dispatchers.IO) { decode() } }
+            // What the picture is called is set here, on the main thread; its bytes are read on IO.
+            val sample = (picked as? Picked.Sample)?.let { withContext(Dispatchers.IO) { Pictures.named(context, it.id) } }
+            when {
+                sample != null -> {
+                    title = sample.title
+                    sampleName = sample.id
+                    credit = sample.title to sample.provenance.byline
+                }
+                picked is Picked.Museum -> title = picked.title
+            }
+            photo = runCatching { withContext(Dispatchers.IO) { decode(sample) } }
                 .onFailure {
                     if (it is CancellationException) throw it
                     failed = if (picked is Picked.Photo) "This photo couldn't be opened." else "This picture couldn’t be fetched. Check your connection, then try again."
@@ -73,28 +85,19 @@ class CreateViewModel(
     }
 
     /** Where the picture's bytes are: the painter's photo, a bundled or downloaded picture, a museum's. */
-    private suspend fun source(): ImageDecoder.Source = when (picked) {
+    private suspend fun source(sample: Sample?): ImageDecoder.Source = when (picked) {
         is Picked.Photo -> ImageDecoder.createSource(context.contentResolver, Uri.parse(picked.uri))
-        is Picked.Sample -> {
-            val sample = Pictures.named(context, picked.id) ?: throw IllegalStateException("no picture ${picked.id}")
-            title = sample.title
-            sampleName = sample.id
-            credit = sample.title to sample.provenance.byline
-            if (sample.night != null) {
-                ImageDecoder.createSource(Nights.of(context).fullPicture(sample.id))
-            } else {
-                ImageDecoder.createSource(context.assets, SampleLibrary.asset(sample.id))
-            }
+        is Picked.Sample -> when {
+            sample == null -> throw IOException("no picture ${picked.id}")
+            sample.night != null -> ImageDecoder.createSource(Unreleased.nights(context)?.fullPicture(sample.id) ?: throw IOException("no nights here"))
+            else -> ImageDecoder.createSource(context.assets, SampleLibrary.asset(sample.id))
         }
-        is Picked.Museum -> {
-            title = picked.title
-            ImageDecoder.createSource(MuseumImages.of(context).file(picked.image))
-        }
+        is Picked.Museum -> ImageDecoder.createSource(Unreleased.museumPicture(context, picked.image))
     }
 
     /** The picture upright (ImageDecoder applies its orientation), at most 2048 px on its long side: more than the pipeline's working size. */
-    private suspend fun decode(): Bitmap {
-        val source = source()
+    private suspend fun decode(sample: Sample?): Bitmap {
+        val source = source(sample)
         return ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
             val long = max(info.size.width, info.size.height)
             if (long > MAX_SIDE) {
@@ -134,6 +137,12 @@ class CreateViewModel(
                 withContext(NonCancellable) {
                     library.add(meta, result.template, bitmap, thumb)
                     paintings.started()
+                }
+                when (picked) {
+                    is Picked.Museum -> Unreleased.museumPainted(context, picked.work)
+                    // The painting keeps its own copy: Take Photo's files have done their work.
+                    is Picked.Photo -> withContext(Dispatchers.IO) { cameraFolder(context).deleteRecursively() }
+                    is Picked.Sample -> Unit
                 }
                 made = meta.id
             } catch (e: CancellationException) {

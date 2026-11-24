@@ -20,8 +20,9 @@ import java.security.MessageDigest
 import java.time.LocalDate
 
 /**
- * Tonight's Picture from the museums (debug builds only, [com.paintbymoonlight.Unreleased], as
- * iOS keeps it behind `#if UNRELEASED`; painting-company row 368): one public-domain picture a
+ * Tonight's Picture from the museums (debug builds only: src/debug, reached through
+ * [com.paintbymoonlight.Unreleased.nights], as iOS keeps it behind `#if UNRELEASED`;
+ * painting-company row 368): one public-domain picture a
  * night, the same for every painter on that calendar date, on iPhone and Android alike.
  *
  * The schedule is the iOS app repository's `nights` branch, `nights.json` and the pictures
@@ -34,7 +35,7 @@ import java.time.LocalDate
  *
  * iOS's ballots (the painters who finished a night vote on a coming one) aren't offered here yet.
  */
-class Nights(private val folder: File) {
+class Nights(private val folder: File) : NightSchedule {
     @Serializable
     data class Schedule(
         val format: Int,
@@ -66,22 +67,33 @@ class Nights(private val folder: File) {
     @Serializable
     data class Ballot(val night: String, val opens: String, val closes: String, val choices: List<String>)
 
-    data class EarlierNight(val day: String, val sample: Sample)
-
-    private val current = MutableStateFlow(
-        runCatching { decode(File(folder, SCHEDULE).readText()) }.getOrNull(),
-    )
+    /** Empty until the kept schedule is read, off the main thread, as the app opens it. */
+    private val current = MutableStateFlow<Schedule?>(null)
     private val _revision = MutableStateFlow(0)
-    /** Moves when the schedule or its files change, so what shows them draws again. */
-    val revision: StateFlow<Int> = _revision.asStateFlow()
+    override val revision: StateFlow<Int> = _revision.asStateFlow()
 
     private val refreshing = Mutex()
     @Volatile private var asked = 0L
+    /** One fetch of a file at a time: a refresh and a pick may want the same picture. */
+    private val fetching = HashMap<String, Mutex>()
+
+    init {
+        scope.launch {
+            val kept = runCatching { decode(File(folder, SCHEDULE).readText()) }.getOrNull()
+            if (kept != null && current.compareAndSet(null, kept)) _revision.value++
+        }
+    }
 
     val schedule: Schedule? get() = current.value
 
+    override fun samples(): List<Sample> = schedule?.pictures?.keys.orEmpty().sorted().mapNotNull(::sample)
+
+    override fun refreshSoon() {
+        scope.launch { refresh() }
+    }
+
     /** The picture [id] names, once its thumbnail is here (its full picture may still be on its way). */
-    fun sample(id: String): Sample? {
+    override fun sample(id: String): Sample? {
         val picture = schedule?.pictures?.get(id) ?: return null
         val thumb = File(folder, picture.thumb)
         if (!thumb.exists()) return null
@@ -94,13 +106,13 @@ class Nights(private val folder: File) {
     }
 
     /** The night's picture on [date], when the schedule has one and its thumbnail is here. */
-    fun night(date: LocalDate): Sample? {
+    override fun night(date: LocalDate): Sample? {
         val day = date.toString()
         return schedule?.nights?.lastOrNull { it.date == day }?.let { sample(it.picture) }
     }
 
     /** The schedule's nights before [date], newest first, with their pictures here. */
-    fun earlierNights(date: LocalDate): List<EarlierNight> {
+    override fun earlierNights(date: LocalDate): List<EarlierNight> {
         val today = date.toString()
         val seen = HashSet<String>()
         return schedule?.nights.orEmpty().filter { it.date < today }.sortedByDescending { it.date }.mapNotNull { night ->
@@ -150,7 +162,7 @@ class Nights(private val folder: File) {
     }
 
     /** The full picture of [id], downloaded now if it isn't here yet (an earlier night's). */
-    suspend fun fullPicture(id: String): File {
+    override suspend fun fullPicture(id: String): File {
         val picture = schedule?.pictures?.get(id) ?: throw IOException("no night's picture $id")
         return fetch(picture.image, picture.sha256)
     }
@@ -158,16 +170,20 @@ class Nights(private val folder: File) {
     private suspend fun fetch(path: String, sha256: String?): File {
         val target = File(folder, path)
         if (target.exists()) return target
-        val incoming = File(folder, "$path.new")
-        Net.download(BASE + path, incoming)
-        withContext(Dispatchers.IO) {
-            if (sha256 != null && digest(incoming) != sha256) {
-                incoming.delete()
-                throw IOException("$path isn't the schedule's picture")
+        val lock = synchronized(fetching) { fetching.getOrPut(path) { Mutex() } }
+        return lock.withLock {
+            if (target.exists()) return@withLock target
+            val incoming = File(folder, "$path.new")
+            Net.download(BASE + path, incoming)
+            withContext(Dispatchers.IO) {
+                if (sha256 != null && digest(incoming) != sha256) {
+                    incoming.delete()
+                    throw IOException("$path isn't the schedule's picture")
+                }
+                if (!incoming.renameTo(target)) throw IOException("couldn't keep $path")
             }
-            if (!incoming.renameTo(target)) throw IOException("couldn't keep $path")
+            target
         }
-        return target
     }
 
     private fun prune(schedule: Schedule) {
@@ -188,19 +204,13 @@ class Nights(private val folder: File) {
         private val ID = Regex("[a-z0-9]+(-[a-z0-9]+)*")
         private val DAY = Regex("\\d{4}-\\d{2}-\\d{2}")
 
-        /** Background work that outlives a screen: a refresh, the shelf's prefetch. */
-        internal val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        /** Background work that outlives a screen: reading the kept schedule, a refresh. */
+        private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
         @Volatile private var shared: Nights? = null
 
         fun of(context: Context): Nights = shared ?: synchronized(this) {
             shared ?: Nights(File(context.applicationContext.filesDir, "Nights")).also { shared = it }
-        }
-
-        /** Starts a refresh that outlives the screen that asked for it. */
-        fun refreshSoon(context: Context) {
-            val nights = of(context)
-            scope.launch { nights.refresh() }
         }
 
         /**

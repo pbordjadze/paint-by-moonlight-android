@@ -321,6 +321,7 @@ class AppTour {
         return MuseumCatalog.decode(
             """{"version": 1, "made": "2026-11-24", "museums": {"tour": "The tour's own photos"},
               "movements": ["Impressionism", "Realism"], "works": [$works]}""",
+            hosts = setOf("tour.invalid"),
         )
     }
 

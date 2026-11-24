@@ -19,8 +19,8 @@ import java.io.File
 
 /**
  * The catalog as the app holds it: the copy kept in the cache folder read at once, a fresh one
- * fetched when there is none or it is a day old (as iOS does). A copy that can't be fetched or
- * read is no failure while an older one is kept.
+ * fetched when there is none or it is a day old (as iOS does; [load] says when it is read). A
+ * copy that can't be fetched or read is no failure while an older one is kept.
  */
 class MuseumLibrary private constructor(private val folder: File, private val prefs: SharedPreferences) {
     sealed interface State {
@@ -57,6 +57,11 @@ class MuseumLibrary private constructor(private val folder: File, private val pr
         _state.value = State.Ready(catalog)
     }
 
+    /**
+     * The kept catalog when there is one, ready at once. A fresh one is fetched when there is none
+     * (and read) or the kept one is a day old: then it only replaces the file, and is read the
+     * next time the app opens the Museum, so two catalogs are never in memory together.
+     */
     private suspend fun load() {
         val kept = withContext(Dispatchers.IO) {
             runCatching { file.inputStream().buffered().use(MuseumCatalog::decode) to file.lastModified() }.getOrNull()
@@ -65,11 +70,17 @@ class MuseumLibrary private constructor(private val folder: File, private val pr
         if (kept != null && System.currentTimeMillis() - kept.second < 24 * 3600_000L) return
         try {
             val incoming = File(folder, "museum.json.new")
-            Net.download(MuseumCatalog.SOURCE, incoming, limit = 256L shl 20, timeoutMillis = 60_000)
+            Net.download(MuseumCatalog.SOURCE, incoming, limit = MAX_CATALOG, timeoutMillis = 60_000)
+            if (kept != null) {
+                withContext(Dispatchers.IO) { if (!incoming.renameTo(file)) incoming.delete() }
+                return
+            }
             val catalog = withContext(Dispatchers.IO) {
-                val catalog = incoming.inputStream().buffered().use(MuseumCatalog::decode)
-                if (!incoming.renameTo(file)) incoming.delete()
-                catalog
+                try {
+                    incoming.inputStream().buffered().use(MuseumCatalog::decode).also { incoming.renameTo(file) }
+                } finally {
+                    incoming.delete()
+                }
             }
             _state.value = State.Ready(catalog)
         } catch (e: CancellationException) {
@@ -91,6 +102,8 @@ class MuseumLibrary private constructor(private val folder: File, private val pr
     companion object {
         private const val TAG = "Museum"
         private const val PAINTED = "paintedWorks"
+        /** About three times today's 17 MB: a catalog past it is refused before it can fill the app's memory. */
+        private const val MAX_CATALOG = 48L shl 20
 
         @Volatile private var shared: MuseumLibrary? = null
 

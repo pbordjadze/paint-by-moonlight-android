@@ -1,6 +1,7 @@
 package com.paintbymoonlight.ui.source
 
 import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -65,20 +66,16 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.paintbymoonlight.Unreleased
 import com.paintbymoonlight.data.Library
-import com.paintbymoonlight.pictures.Nights
 import com.paintbymoonlight.pictures.Pictures
 import com.paintbymoonlight.pictures.Sample
 import com.paintbymoonlight.pictures.SampleKind
 import com.paintbymoonlight.pictures.SampleLibrary
 import com.paintbymoonlight.ui.create.Picked
-import com.paintbymoonlight.ui.museum.MuseumScreen
-import com.paintbymoonlight.ui.museum.MuseumWorkScreen
 import com.paintbymoonlight.ui.theme.raised
 import java.io.File
 import java.time.LocalDate
@@ -89,10 +86,7 @@ import java.util.Locale
 
 private object PageRoutes {
     const val PAGE = "page"
-    const val MUSEUM = "museum"
-    const val WORK = "museum/{work}"
     const val CREDITS = "credits"
-    fun work(id: String) = "museum/${Uri.encode(id)}"
 }
 
 /**
@@ -110,21 +104,13 @@ fun PaintPage(library: Library, onPicked: (Picked) -> Unit, onResume: (String) -
         composable(PageRoutes.PAGE) {
             PaintSources(
                 onPicked = onPicked,
-                onMuseum = { nav.navigate(PageRoutes.MUSEUM) },
-                onCredits = { nav.navigate(PageRoutes.CREDITS) },
+                onMuseum = { nav.navigate(Unreleased.MUSEUM) { launchSingleTop = true } },
+                onCredits = { nav.navigate(PageRoutes.CREDITS) { launchSingleTop = true } },
                 onClose = onClose,
             )
         }
         composable(PageRoutes.CREDITS) { PictureCredits(onBack = { nav.popBackStack() }) }
-        if (Unreleased.ON) {
-            composable(PageRoutes.MUSEUM) {
-                MuseumScreen(library = library, onWork = { nav.navigate(PageRoutes.work(it)) }, onClose = { nav.popBackStack() })
-            }
-            composable(PageRoutes.WORK) { entry ->
-                val id = entry.arguments?.getString("work") ?: return@composable
-                MuseumWorkScreen(id = id, library = library, onPaint = onPicked, onResume = onResume, onBack = { nav.popBackStack() })
-            }
-        }
+        Unreleased.museumRoutes(this, nav, library, onPicked, onResume)
     }
 }
 
@@ -133,12 +119,12 @@ fun PaintPage(library: Library, onPicked: (Picked) -> Unit, onResume: (String) -
 private fun PaintSources(onPicked: (Picked) -> Unit, onMuseum: () -> Unit, onCredits: () -> Unit, onClose: () -> Unit) {
     val context = LocalContext.current
     val samples = remember { SampleLibrary.of(context) }
-    val nights = remember { Nights.of(context) }
-    val revision by nights.revision.collectAsStateWithLifecycle()
-    val today = remember(revision) { LocalDate.now() }
+    val nights = remember { Unreleased.nights(context) }
+    val revision = nightsRevision(nights)
+    val today = rememberToday()
     val tonight = remember(revision, today) { Pictures.tonight(context, today) }
     val earlier = remember(revision, today) {
-        if (Unreleased.ON && nights.night(today) != null) nights.earlierNights(today) else emptyList()
+        if (nights?.night(today) != null) nights.earlierNights(today) else emptyList()
     }
 
     val photo = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -147,17 +133,21 @@ private fun PaintSources(onPicked: (Picked) -> Unit, onMuseum: () -> Unit, onCre
     var shot by rememberSaveable { mutableStateOf<String?>(null) }
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
         val uri = shot
-        if (taken && uri != null) onPicked(Picked.Photo(uri))
+        shot = null
+        if (uri == null) return@rememberLauncherForActivityResult
+        // A capture called off leaves nothing behind; a photo taken goes once its painting is saved (CreateViewModel).
+        if (taken) onPicked(Picked.Photo(uri)) else Uri.parse(uri).lastPathSegment?.let { File(cameraFolder(context), it).delete() }
     }
     val hasCamera = remember { context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY) }
-    val takePhoto = {
-        val file = File(context.cacheDir, "camera/photo-${System.currentTimeMillis()}.jpg").apply { parentFile?.mkdirs() }
+    val takePhoto: () -> Unit = {
+        val file = File(cameraFolder(context), "photo-${System.currentTimeMillis()}.jpg").apply { parentFile?.mkdirs() }
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
         shot = uri.toString()
         try {
             camera.launch(uri)
         } catch (_: ActivityNotFoundException) {
             shot = null
+            file.delete()
         }
     }
     val pick = { sample: Sample -> onPicked(Picked.Sample(sample.id)) }
@@ -269,6 +259,9 @@ private fun OwnTile(title: String, icon: ImageVector, hint: String? = null, onCl
         }
     }
 }
+
+/** Where Take Photo's camera app writes (`file_paths.xml`'s `camera`). */
+internal fun cameraFolder(context: Context) = File(context.cacheDir, "camera")
 
 /** An earlier night as the painter says it: "Last Night", a weekday this past week, a date before that. */
 internal fun whenText(day: String, today: LocalDate, locale: Locale = Locale.getDefault()): String {

@@ -28,10 +28,8 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.paintbymoonlight.Unreleased
 import com.paintbymoonlight.data.Library
-import com.paintbymoonlight.pictures.Nights
 import com.paintbymoonlight.pictures.Sample
 import com.paintbymoonlight.pictures.SampleLibrary
-import java.time.LocalDate
 import java.time.ZoneId
 
 /**
@@ -46,24 +44,24 @@ import java.time.ZoneId
 @Composable
 fun TonightShelf(library: Library, onPaint: (Sample) -> Unit, onMore: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val nights = remember { Nights.of(context) }
-    if (Unreleased.ON) {
+    val nights = remember { Unreleased.nights(context) }
+    if (nights != null) {
         LifecycleResumeEffect(Unit) {
-            Nights.refreshSoon(context)
+            nights.refreshSoon()
             onPauseOrDispose {}
         }
     }
-    val revision by nights.revision.collectAsStateWithLifecycle()
+    val revision = nightsRevision(nights)
+    val today = rememberToday()
     val paintings by library.paintings.collectAsStateWithLifecycle()
     val held = remember(paintings) { paintings.mapNotNull { it.sampleName }.toSet() }
     val hasRoom = paintings.size < FEW_PAINTINGS
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val columns = maxOf(1, ((maxWidth + 14.dp) / (160.dp + 14.dp)).toInt())
-        val today = remember(revision) { LocalDate.now() }
         // The pictures, and whether the first is tonight's (its crescent, its heading) or the earlier nights begin.
         val (shown, earlier) = remember(revision, today, held, hasRoom, columns) {
             val count = if (hasRoom) columns else 1
-            val night = if (Unreleased.ON) nights.night(today) else null
+            val night = nights?.night(today)
             when {
                 night == null -> SampleLibrary.of(context).nights(today, ZoneId.systemDefault(), count, held) to false
                 night.id !in held -> listOf(night) to false

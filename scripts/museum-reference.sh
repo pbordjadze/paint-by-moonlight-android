@@ -2,10 +2,10 @@
 # Prints what iOS's Museum makes of a catalog, from the iOS app's own MuseumCatalog.swift compiled
 # with swift-corelibs-foundation: the orders of a few queries, each work's painting title, the
 # shared names and two shuffle hashes. MuseumQueryTest compares the Android port with it, line by
-# line, on app/src/test/resources/museum/catalog.json (40 works of the real catalog, three
+# line, on app/src/testDebug/resources/museum/catalog.json (40 works of the real catalog, three
 # without a date, four with diacritics, and one of a kind no build knows).
 #
-#   scripts/museum-reference.sh <paint-by-number checkout> > app/src/test/resources/museum/ios.txt
+#   scripts/museum-reference.sh <paint-by-number checkout> > app/src/testDebug/resources/museum/ios.txt
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IOS="$1"
@@ -37,4 +37,4 @@ print("mix", MuseumQuery.mix("aic-100037", 1), MuseumQuery.mix("cma-150694", 0xf
 open(sys.argv[2], "w").write(main)
 PY
 swiftc -O "$WORK/ref.swift" -o "$WORK/ref"
-"$WORK/ref" "$ROOT/app/src/test/resources/museum/catalog.json"
+"$WORK/ref" "$ROOT/app/src/testDebug/resources/museum/catalog.json"

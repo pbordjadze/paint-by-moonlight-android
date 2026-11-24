@@ -15,17 +15,17 @@ import java.time.ZoneId
 object Pictures {
     /**
      * The Paint page's and the gallery's Tonight's Picture: in debug builds the museums'
-     * schedule's night first ([Nights]), the same for every painter; otherwise, or offline with
+     * schedule's night first ([NightSchedule]), the same for every painter; otherwise, or offline with
      * nothing downloaded, the library's turn ([SampleLibrary.tonight]).
      */
     fun tonight(context: Context, date: LocalDate = LocalDate.now(), zone: ZoneId = ZoneId.systemDefault()): Sample? {
-        if (Unreleased.ON) Nights.of(context).night(date)?.let { return it }
+        Unreleased.nights(context)?.night(date)?.let { return it }
         return SampleLibrary.of(context).tonight(date, zone)
     }
 
     /** The picture a painting was made from, by its id; null for one neither the library nor the schedule holds now. */
     fun named(context: Context, id: String): Sample? =
-        SampleLibrary.of(context).named(id) ?: if (Unreleased.ON) Nights.of(context).sample(id) else null
+        SampleLibrary.of(context).named(id) ?: Unreleased.nights(context)?.sample(id)
 
     private val tiles = object : LruCache<String, Bitmap>(32 shl 20) {
         override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount

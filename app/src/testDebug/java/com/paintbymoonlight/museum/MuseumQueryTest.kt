@@ -56,6 +56,19 @@ class MuseumQueryTest {
     }
 
     @Test
+    fun picturesComeOnlyFromTheMuseumsOverHttps() {
+        val hosts = MuseumCatalog.HOSTS
+        assertTrue(MuseumCatalog.served("https://www.artic.edu/iiif/2/x/full/600,/0/default.jpg", hosts))
+        assertTrue(MuseumCatalog.served("https://openaccess-cdn.clevelandart.org/1.jpg", hosts))
+        assertTrue(MuseumCatalog.served("https://api.nga.gov/iiif/x/full/!600,600/0/default.jpg", hosts))
+        assertFalse(MuseumCatalog.served("http://www.artic.edu/x.jpg", hosts))
+        assertFalse(MuseumCatalog.served("https://evilartic.edu/x.jpg", hosts))
+        assertFalse(MuseumCatalog.served("https://artic.edu.example.com/x.jpg", hosts))
+        assertFalse(MuseumCatalog.served("https://user@www.artic.edu/x.jpg", hosts))
+        assertFalse(MuseumCatalog.served("file:///data/x.jpg", hosts))
+    }
+
+    @Test
     fun aWorkPaintedMatchesByNameOrRecordedId() {
         val work = catalog.works.first()
         val name = MuseumPainted.key(work.paintingTitle)

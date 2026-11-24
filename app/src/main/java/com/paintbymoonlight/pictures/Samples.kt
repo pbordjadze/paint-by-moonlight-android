@@ -13,7 +13,7 @@ import java.time.temporal.ChronoUnit
 /**
  * A picture to paint that isn't the painter's own: one of the library's, bundled as
  * `assets/samples/<id>.jpg` (the iOS app's files byte for byte), or a night's from the museums
- * ([Nights]), on the device once downloaded.
+ * ([NightSchedule]), on the device once downloaded.
  */
 data class Sample(
     val id: String,

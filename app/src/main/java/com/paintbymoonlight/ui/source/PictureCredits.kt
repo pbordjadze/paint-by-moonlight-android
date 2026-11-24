@@ -25,7 +25,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.paintbymoonlight.Unreleased
-import com.paintbymoonlight.pictures.Nights
 import com.paintbymoonlight.pictures.Sample
 import com.paintbymoonlight.pictures.SampleLibrary
 
@@ -40,7 +39,7 @@ fun PictureCredits(onBack: () -> Unit) {
     val context = LocalContext.current
     val pictures = remember {
         val library = SampleLibrary.of(context).all
-        val nights = if (Unreleased.ON) Nights.of(context).let { n -> n.schedule?.pictures?.keys.orEmpty().sorted().mapNotNull(n::sample) } else emptyList()
+        val nights = Unreleased.nights(context)?.samples().orEmpty()
         library + nights
     }
     Scaffold(

@@ -94,6 +94,7 @@ import com.paintbymoonlight.museum.MuseumLibrary
 import com.paintbymoonlight.museum.MuseumPainted
 import com.paintbymoonlight.museum.MuseumQuery
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
@@ -117,6 +118,12 @@ fun MuseumScreen(library: Library, onWork: (String) -> Unit, onClose: () -> Unit
     var kinds by rememberSaveable { mutableStateOf(MuseumQuery.Kinds.Everything) }
     var order by rememberSaveable { mutableStateOf(MuseumQuery.Order.Colorful) }
     var search by rememberSaveable { mutableStateOf("") }
+    // The wall follows the search once typing pauses: each key would sort 31,000 works again.
+    var searched by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(search) {
+        if (search.isNotEmpty()) delay(250)
+        searched = search
+    }
     var seed by rememberSaveable { mutableStateOf(1L) }
     var menu by remember { mutableStateOf(false) }
 
@@ -170,11 +177,12 @@ fun MuseumScreen(library: Library, onWork: (String) -> Unit, onClose: () -> Unit
                     Button(onClick = { museum.retry() }) { Text("Try Again") }
                 }
                 is MuseumLibrary.State.Ready -> {
-                    val query = MuseumQuery(movement, kinds, order, search, seed)
+                    val query = MuseumQuery(movement, kinds, order, searched, seed)
                     Wall(
                         catalog = s.catalog,
                         query = query,
                         library = library,
+                        search = search,
                         onSearch = { search = it },
                         onMovement = { movement = it },
                         onWork = onWork,
@@ -217,6 +225,7 @@ private fun Wall(
     catalog: MuseumCatalog,
     query: MuseumQuery,
     library: Library,
+    search: String,
     onSearch: (String) -> Unit,
     onMovement: (String?) -> Unit,
     onWork: (String) -> Unit,
@@ -251,7 +260,7 @@ private fun Wall(
     }
 
     Column(Modifier.fillMaxSize()) {
-        SearchField(query.search, onSearch)
+        SearchField(search, onSearch)
         Movements(catalog.movements, counts, query.movement, onMovement)
         val works = shown
         when {
