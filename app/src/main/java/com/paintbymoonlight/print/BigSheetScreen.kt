@@ -380,8 +380,8 @@ private fun Paper(picture: Bitmap?, width: Dp, height: Dp) {
 
 /**
  * Google Pay where the relay takes it (its quote says how) and the device can; a test order,
- * unpaid, while the relay doesn't take it. The button says Order Print either way: a test is
- * said in a note under it, only while the relay is its sandbox.
+ * unpaid, while the relay doesn't take it. The button says Order Print either way, and a note
+ * under it says when the order is a test.
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -395,7 +395,10 @@ private fun OrderBar(
     val googlePay = offered?.takeIf { googlePayReady }
     val ready = quote != null && !model.placing && model.scene != null
     Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 2.dp) {
-        Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
             when {
                 // Google Pay's sheet is up, or the paid order is on its way to the relay.
                 googlePay != null && model.placing -> Box(Modifier.height(56.dp), contentAlignment = Alignment.Center) {
@@ -410,33 +413,38 @@ private fun OrderBar(
                     enabled = ready,
                     modifier = Modifier.fillMaxWidth().height(56.dp),
                 )
-                offered == null -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Button(
-                        onClick = model::placeTestOrder,
-                        enabled = ready,
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                    ) {
-                        if (model.placing) {
-                            LoadingIndicator(Modifier.size(28.dp), color = MaterialTheme.colorScheme.onPrimary)
-                        } else {
-                            Icon(Icons.Rounded.LocalShipping, null, Modifier.size(ButtonDefaults.IconSize))
-                            Spacer(Modifier.width(ButtonDefaults.IconSpacing))
-                            Text("Order Print")
-                        }
-                    }
-                    if (quote?.sandbox != null) {
-                        Text(
-                            "Test payment: nothing is charged or printed.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 6.dp),
-                        )
+                offered == null -> Button(
+                    onClick = model::placeTestOrder,
+                    enabled = ready,
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                ) {
+                    if (model.placing) {
+                        LoadingIndicator(Modifier.size(28.dp), color = MaterialTheme.colorScheme.onPrimary)
+                    } else {
+                        Icon(Icons.Rounded.LocalShipping, null, Modifier.size(ButtonDefaults.IconSize))
+                        Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+                        Text("Order Print")
                     }
                 }
                 else -> Text(
                     "Ordering a sheet needs Google Pay on this device.",
                     style = MaterialTheme.typography.bodyMedium,
                     textAlign = TextAlign.Center,
+                )
+            }
+            // Whenever the order is a test: always without Google Pay (an unpaid test order),
+            // and with it while the relay is its sandbox.
+            val test = when {
+                offered == null -> "Test order: nothing is charged or printed."
+                googlePay != null && quote.sandbox != null -> "Test payment: nothing is charged or printed."
+                else -> null
+            }
+            if (test != null) {
+                Text(
+                    test,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp),
                 )
             }
         }
