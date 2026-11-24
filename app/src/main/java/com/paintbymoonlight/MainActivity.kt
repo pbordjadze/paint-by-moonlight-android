@@ -21,6 +21,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import androidx.lifecycle.createSavedStateHandle
@@ -195,7 +196,7 @@ private fun MoonlightNav(app: MoonlightApp, opened: Uri?) {
                 }
                 composable(Routes.PAGES) { entry ->
                     val id = entry.arguments?.getString("id") ?: return@composable
-                    val paper = Paper.forCountry(context.resources.configuration.locales[0]?.country)
+                    val paper = Paper.forCountry(LocalConfiguration.current.locales[0]?.country)
                     val model = viewModel { PrintViewModel(app, library, id, paper, createSavedStateHandle()) }
                     PrintScreen(model = model, onBack = { nav.popBackStack() }, onBigSheet = { nav.navigate(Routes.print(id)) })
                 }

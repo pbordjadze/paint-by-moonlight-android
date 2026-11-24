@@ -53,8 +53,8 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Build the app and run its JVM tests
-        run: ./gradlew --console=plain assembleDebug assembleDebugAndroidTest testDebugUnitTest
+      - name: Build the app, run its JVM tests and lint it
+        run: ./gradlew --console=plain assembleDebug assembleDebugAndroidTest testDebugUnitTest lintDebug
 
       - name: Enable KVM
         run: |

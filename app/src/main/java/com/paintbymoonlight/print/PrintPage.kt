@@ -81,7 +81,7 @@ internal object PrintPage {
             val washes = scene.paints.map { sketchColor(it.color) }
             scene.regions.forEachIndexed { i, region ->
                 if (i % CHECK_EVERY == 0 && stop()) return canvas.restore()
-                if (visible != null && !RectF.intersects(visible, region.bounds)) return@forEachIndexed
+                if (visible != null && !region.bounds.intersects(visible)) return@forEachIndexed
                 wash.color = washes.getOrElse(region.paint) { WHITE }
                 canvas.drawPath(region.path, wash)
             }

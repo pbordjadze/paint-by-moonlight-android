@@ -14,6 +14,7 @@ class Preferences(context: Context) {
     }
 
     private var zen by mutableStateOf(prefs.getBoolean(ZEN, false))
+    private var sound by mutableStateOf(prefs.getBoolean(SOUNDS, true))
     private var length by mutableStateOf(
         runCatching { PaintingLength.valueOf(prefs.getString(LENGTH, null) ?: "") }.getOrDefault(PaintingLength.Relaxed))
 
@@ -22,12 +23,18 @@ class Preferences(context: Context) {
         get() = zen
         set(on) { zen = on; prefs.edit().putBoolean(ZEN, on).apply() }
 
+    /** The painting's sounds (iOS's Settings › Sounds; on unless turned off). */
+    var sounds: Boolean
+        get() = sound
+        set(on) { sound = on; prefs.edit().putBoolean(SOUNDS, on).apply() }
+
     var paintingLength: PaintingLength
         get() = length
         set(value) { length = value; prefs.edit().putString(LENGTH, value.name).apply() }
 
     private companion object {
         const val ZEN = "zenMode"
+        const val SOUNDS = "sounds"
         const val LENGTH = "paintingLength"
         const val RETIRED_HAPTICS = "haptics"
     }

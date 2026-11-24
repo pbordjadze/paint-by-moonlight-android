@@ -13,7 +13,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import java.io.File
-import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
@@ -33,7 +32,6 @@ import androidx.compose.ui.graphics.Matrix
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.scale
-import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.graphics.shapes.Morph
@@ -61,6 +59,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Undo
+import androidx.compose.material.icons.automirrored.rounded.VolumeOff
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Print
@@ -75,10 +75,25 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.Role
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -161,24 +176,35 @@ private fun Painting(
 ) {
     val session = state.session
     val camera = remember { Camera() }
-    val pulse = remember { HintPulse() }
+    val motion = remember { CanvasMotion() }
     val scope = rememberCoroutineScope()
     val view = LocalView.current
+    val haptics = remember(view) { Haptics(view) }
+    val context = LocalContext.current
+    val sounds = remember(context) { Sounds(context) }
+    sounds.enabled = preferences.sounds
+    LaunchedEffect(sounds) { withContext(Dispatchers.Default) { sounds.prepare() } }
+    DisposableEffect(sounds) { onDispose { sounds.release() } }
     val density = LocalDensity.current.density
-    val doubleTapMillis = LocalViewConfiguration.current.doubleTapTimeoutMillis
-    val pulseSpec = MaterialTheme.motionScheme.slowEffectsSpec<Float>()
+    val still = rememberReduceMotion()
+    motion.still = still
     var shake by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var menu by remember { mutableStateOf(false) }
     var finishedHere by remember { mutableStateOf(false) }
     var finishedAt by remember { mutableStateOf<Long?>(null) }
-    // A tap that painted nothing, so a second one close by and soon is a double tap (Whole
-    // painting). A tap that paints is never held back waiting to see whether a second follows.
+    var zenNote by remember { mutableIntStateOf(0) }
+    // A tap that painted nothing, so a second one close by and soon is a double tap (iOS's
+    // zoom step). A tap that paints is never held back waiting to see whether a second follows.
     val lastMiss = remember { arrayOfNulls<Pair<Long, Offset>>(1) }
-    val hintJob = remember { arrayOfNulls<Job>(1) }
-    val inset = 24 * density
-    val finishedInset = 12 * density
-    val scene = session.scene
+    val flightJob = remember { arrayOfNulls<Job>(1) }
+    // iOS keeps the painting 16 pt clear of the view's edges.
+    val inset = 16 * density
+    val scene = state.session.scene
     val complete = session.let { it.changes; it.isComplete }
+    val paper = MaterialTheme.colorScheme.background
+    val darkBackdrop = paper.luminance() < 0.5f
+
+    WideColor()
 
     // Save on leaving the app; leaving the screen saves as the model is cleared.
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -189,51 +215,141 @@ private fun Painting(
     }
 
     // Where the painter left the canvas is saved with the painting, once it has been still a
-    // moment (after a flight's spring too). Automatic placements (fits, transitions, the
-    // finish) are not the painter's and save nothing.
+    // moment (after a flight too). Automatic placements (fits, transitions, the finish) are not
+    // the painter's and save nothing.
     LaunchedEffect(camera) {
         snapshotFlow { camera.moves }.drop(1).collectLatest {
             delay(900)
             if (camera.viewport.width > 0) {
-                session.progress.view = camera.view(scene.width, scene.height, inset)
+                session.progress.view = camera.view()
                 model.viewChanged()
             }
         }
     }
 
-    fun flyToNext(hint: Boolean) {
-        val center = camera.toCanvas(Offset(camera.viewport.width / 2f, camera.viewport.height / 2f))
-        val next = session.nextArea(nearX = center.x, nearY = center.y) ?: return
-        val b = scene.regions[next].bounds
-        val fit = fitScale(camera.viewport, scene.width, scene.height, inset)
-        // A new hint takes over from one still beating, rather than both driving the pulse.
-        if (hint) hintJob[0]?.cancel()
-        val job = scope.launch {
-            camera.flyToArea(b.left, b.top, b.right, b.bottom, minScale = fit, maxScale = fit * 12)
-            if (hint) {
-                pulse.region = next
-                try {
-                    // Three beats that never quite go out until the last.
-                    repeat(3) { beat ->
-                        pulse.strength.animateTo(1f, pulseSpec)
-                        pulse.strength.animateTo(if (beat < 2) 0.35f else 0f, pulseSpec)
-                    }
-                } finally {
-                    pulse.region = null
-                }
-            }
-        }
-        if (hint) hintJob[0] = job
+    /** A flight of the painter's: a new one takes over from the one going. */
+    fun fly(block: suspend () -> Unit) {
+        flightJob[0]?.cancel()
+        flightJob[0] = scope.launch { block() }
     }
 
-    fun flyToFit() {
-        scope.launch { camera.settle(fitting(scene.width, scene.height, if (complete) finishedInset else inset)) }
+    /**
+     * Hint, and Zen Mode's glide: to the unpainted area of the paint in hand nearest [nearX],
+     * [nearY] (the middle of the view when null), zoomed until its number reads, beating as the
+     * flight lands (iOS's `reveal`).
+     */
+    fun showNext(near: Offset? = null) {
+        val at = near ?: camera.toCanvas(Offset(camera.viewport.width / 2f, camera.viewport.height / 2f))
+        val next = session.nextArea(nearX = at.x, nearY = at.y) ?: return
+        val region = scene.regions[next]
+        val label = scene.labelOf[next].takeIf { it >= 0 }?.let { scene.labels[it] }
+        val b = region.bounds
+        val target = camera.revealTarget(
+            x = label?.x ?: b.centerX(), y = label?.y ?: b.centerY(),
+            extent = max(b.width(), b.height()), labelSize = label?.fontSize ?: 8f,
+            legiblePx = 17 * density, maxScale = camera.deepest(density),
+        )
+        motion.pulse(next, delay = 0.4f)
+        fly { camera.travel(target, 0.55f, still) }
     }
+
+    fun flyToFit() = fly { camera.settle(fitting(scene.width, scene.height, inset), 0.5f, still) }
 
     fun undo() {
         if (session.undo() != null) {
             model.changed()
-            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            haptics.tick()
+        }
+    }
+
+    /**
+     * The finish: once the last fill has landed the camera rests a moment, then eases out to the
+     * whole painting, which shines as it lands; already showing about all of it, the camera stays
+     * and the shine sweeps once the fill has landed. Under Reduce Motion it cuts, and nothing shines.
+     */
+    fun finish(fillSeconds: Float) {
+        flightJob[0]?.cancel()
+        flightJob[0] = scope.launch {
+            val fitted = abs(camera.scale / camera.fit - 1) <= 0.05f
+            delay(((fillSeconds + if (fitted) 0f else 0.35f) * 1000).toLong())
+            if (!session.isComplete) return@launch
+            // Fitted, it settles there at once, to follow the Finished bar coming in.
+            val seconds = if (fitted) 0.3f else 0.8f
+            motion.shine(-1, if (still || fitted) 0f else seconds)
+            camera.settle(fitting(scene.width, scene.height, inset), seconds, still)
+        }
+    }
+
+    /**
+     * What the painter feels and hears of fills just made, a tap's one or a drag's several at
+     * once: their press and note, a finished color's rising three, the painting's celebration.
+     */
+    fun painted(fills: List<Tap.Painted>) {
+        if (fills.isEmpty()) return
+        model.changed()
+        // What they painted together, as a size to feel (iOS's: the square root of its share, ×6).
+        val area = fills.sumOf { scene.regions[it.region].area.toDouble() }.toFloat()
+        val size = min(1f, kotlin.math.sqrt(area / (scene.width * scene.height)) * 6)
+        sounds.paint(size)
+        when {
+            fills.any { it.finishedPainting } -> {
+                // The painting's celebration is the one finale: its last paint has none of its own.
+                haptics.celebrate(size)
+                sounds.celebrate()
+                finishedHere = true
+                finishedAt = System.currentTimeMillis()
+                finish(fillSeconds = 0.9f)
+            }
+            fills.any { it.finishedPaint } -> {
+                haptics.colorComplete(size)
+                sounds.colorComplete()
+            }
+            else -> haptics.paint(size)
+        }
+    }
+
+    /**
+     * Zen Mode glides on from [near] once the fill shows; after a finished color's shine, which
+     * a flight leaving at once would hide. Painting again before then keeps the page still.
+     */
+    fun glideOn(near: Offset, finishedColor: Boolean) {
+        if (!preferences.zenMode || session.isComplete) return
+        val changes = session.changes
+        scope.launch {
+            delay(if (finishedColor && !still) 1300 else 350)
+            if (session.changes == changes && !session.isComplete) showNext(near = near)
+        }
+    }
+
+    /** A drag paints the paint in hand with an 11 pt brush; everything it paints undoes together. */
+    val stroking = remember(session) { Stroking() }
+    val stroke = object : CanvasStroke {
+        override fun begin(at: Offset): Boolean {
+            if (!session.beginStroke()) return false
+            flightJob[0]?.cancel()
+            camera.land()
+            stroking.finishedColor = false
+            stroking.last = camera.toCanvas(at)
+            // The brush's tick, unless its first dab paints, which is felt as a fill.
+            if (paint(stroking.last, stroking.last).isEmpty()) haptics.tick()
+            return true
+        }
+
+        override fun move(from: Offset, to: Offset) {
+            val b = camera.toCanvas(to)
+            paint(stroking.last, b)
+            stroking.last = b
+        }
+
+        private fun paint(a: Offset, b: Offset): List<Tap.Painted> {
+            val fills = session.drag(a.x, a.y, b.x, b.y, radius = CanvasLook.brushRadius * density / camera.scale)
+            if (fills.any { it.finishedPaint }) stroking.finishedColor = true
+            painted(fills)
+            return fills
+        }
+
+        override fun end() {
+            if (session.endStroke() > 0) glideOn(stroking.last, stroking.finishedColor)
         }
     }
 
@@ -248,8 +364,11 @@ private fun Painting(
                 zen = preferences.zenMode,
                 canUndo = session.let { it.changes; it.canUndo },
                 onBack = { model.saveNow(); onBack() },
-                onHint = { flyToNext(hint = true) },
-                onZen = { preferences.zenMode = !preferences.zenMode },
+                onHint = { showNext() },
+                onZen = {
+                    preferences.zenMode = !preferences.zenMode
+                    if (preferences.zenMode) zenNote++
+                },
                 onUndo = ::undo,
                 onMore = { menu = true },
             )
@@ -257,60 +376,68 @@ private fun Painting(
                 PaintCanvas(
                     session = session,
                     camera = camera,
+                    motion = motion,
                     placement = {
                         val saved = session.progress.view
                         when {
-                            session.isComplete -> fitting(scene.width, scene.height, finishedInset)
+                            session.isComplete -> fitting(scene.width, scene.height, inset)
                             saved != null -> restoring(saved, scene.width, scene.height, inset)
                             else -> filling(scene.width, scene.height, inset)
                         }
                     },
-                    minScale = { fitScale(it, scene.width, scene.height, inset) },
-                    pulse = pulse,
+                    darkBackdrop = darkBackdrop,
+                    backdrop = android.graphics.Color.pack(paper.toArgb()),
                     modifier = Modifier.fillMaxSize(),
+                    stars = { sounds.skyOfComingFill() == Sky.Moon },
+                    stroke = stroke,
                     onTap = { screen ->
                         val p = camera.toCanvas(screen)
                         val now = SystemClock.uptimeMillis()
-                        when (val tap = session.tap(p.x, p.y)) {
+                        // A fingertip's reach (14 pt) finds a small area of the paint in hand just beside the tap.
+                        val tap = session.tap(p.x, p.y, tolerance = 14 * density / camera.scale)
+                        when (tap) {
                             is Tap.Painted -> {
                                 lastMiss[0] = null
-                                model.changed()
-                                view.performHapticFeedback(
-                                    if (tap.finishedPaint) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.CLOCK_TICK)
-                                if (tap.finishedPainting) {
-                                    finishedHere = true
-                                    finishedAt = System.currentTimeMillis()
-                                    // Once the Finished bar is in, the whole painting in the room above it.
-                                    scope.launch {
-                                        delay(450)
-                                        camera.settle(fitting(scene.width, scene.height, finishedInset))
-                                    }
-                                } else if (preferences.zenMode) {
-                                    scope.launch { delay(if (tap.finishedPaint) 900 else 380); flyToNext(hint = false) }
-                                }
+                                painted(listOf(tap))
+                                if (!tap.finishedPainting) glideOn(p, tap.finishedPaint)
                             }
                             else -> {
                                 val miss = lastMiss[0]
-                                val slop = 48 * density
-                                if (miss != null && now - miss.first <= doubleTapMillis && (screen - miss.second).getDistance() <= slop) {
+                                if (miss != null && now - miss.first <= 300 && (screen - miss.second).getDistance() <= 40 * density) {
                                     lastMiss[0] = null
-                                    flyToFit()
+                                    val step = camera.stepTarget(screen, camera.deepest(density))
+                                    if (step == null) flyToFit() else fly { camera.travel(step, 0.42f, still) }
                                 } else {
                                     lastMiss[0] = now to screen
                                     if (tap is Tap.OtherPaint) {
                                         shake = tap.paint to ((shake?.second ?: 0) + 1)
-                                        view.performHapticFeedback(HapticFeedbackConstants.REJECT)
+                                        haptics.reject()
+                                        sounds.reject()
                                     }
                                 }
                             }
                         }
                     },
                 )
+                ZenNote(zenNote, Modifier.align(Alignment.TopCenter).padding(top = 12.dp))
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, modifier = Modifier.align(Alignment.TopEnd)) {
                     DropdownMenuItem(
-                        text = { Text("Whole painting") },
+                        text = { Text("Fit to Screen") },
                         leadingIcon = { Icon(Icons.Rounded.Fullscreen, null) },
                         onClick = { menu = false; flyToFit() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Sounds") },
+                        leadingIcon = {
+                            Icon(if (preferences.sounds) Icons.AutoMirrored.Rounded.VolumeUp else Icons.AutoMirrored.Rounded.VolumeOff, null)
+                        },
+                        trailingIcon = { Switch(checked = preferences.sounds, onCheckedChange = null) },
+                        onClick = { preferences.sounds = !preferences.sounds },
+                        // Said as a switch, on or off; the menu stays open to show it turn.
+                        modifier = Modifier.semantics {
+                            role = Role.Switch
+                            toggleableState = ToggleableState(preferences.sounds)
+                        },
                     )
                     if (complete) {
                         DropdownMenuItem(
@@ -340,11 +467,17 @@ private fun Painting(
                         session = session,
                         shake = shake,
                         onSelect = {
-                            session.select(it)
-                            model.changed()
-                            if (preferences.zenMode) flyToNext(hint = false)
+                            if (it == session.selected) {
+                                // The paint in hand's swatch, tapped again: where to paint next.
+                                showNext()
+                            } else {
+                                session.select(it)
+                                model.changed()
+                                haptics.tick()
+                            }
                         },
                         modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
+                        still = still,
                     )
                 }
             }
@@ -358,6 +491,89 @@ private fun Painting(
             }
         }
     }
+}
+
+/**
+ * What Zen Mode does, said for a few seconds when it is turned on, as iOS's toast says it:
+ * nothing on screen otherwise explains why the page moves.
+ */
+@Composable
+private fun ZenNote(shown: Int, modifier: Modifier = Modifier) {
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(shown) {
+        if (shown == 0) return@LaunchedEffect
+        visible = true
+        delay(3500)
+        visible = false
+    }
+    AnimatedVisibility(visible, modifier = modifier, enter = fadeIn() + slideInVertically { -it / 2 }, exit = fadeOut()) {
+        Surface(
+            shape = RoundedCornerShape(50),
+            color = MaterialTheme.colorScheme.inverseSurface,
+            contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+            modifier = Modifier.padding(horizontal = 24.dp).semantics { liveRegion = LiveRegionMode.Polite },
+        ) {
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.SelfImprovement, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Zen Mode is on: after each fill, the page glides to the next area of your color.", style = MaterialTheme.typography.labelLarge)
+            }
+        }
+    }
+}
+
+/**
+ * Asks for the screen's wide color gamut while the painting shows, where the screen has one,
+ * so the paints are the Display P3 colors iOS shows; every other screen keeps the default.
+ * Counted per window, so two painting screens overlapping in a transition hand it over in
+ * either order and the window's own mode comes back once the last leaves.
+ */
+@Composable
+private fun WideColor() {
+    val view = LocalView.current
+    DisposableEffect(view) {
+        val window = (view.context as? android.app.Activity)?.window
+        val wide = view.display?.isWideColorGamut == true
+        if (wide && window != null) WideColorHolds.take(window)
+        onDispose { if (wide && window != null) WideColorHolds.give(window) }
+    }
+}
+
+/** The painting screens asking each window for wide color, and the mode it had before the first. */
+private object WideColorHolds {
+    private class Hold(val before: Int, var count: Int)
+    private val holds = java.util.WeakHashMap<android.view.Window, Hold>()
+
+    fun take(window: android.view.Window) {
+        val hold = holds.getOrPut(window) { Hold(window.colorMode, 0) }
+        hold.count++
+        window.colorMode = android.content.pm.ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT
+    }
+
+    fun give(window: android.view.Window) {
+        val hold = holds[window] ?: return
+        if (--hold.count > 0) return
+        holds.remove(window)
+        window.colorMode = hold.before
+    }
+}
+
+/** Whether the painter has turned animations off (the system's Remove animations): iOS's Reduce Motion. Followed live. */
+@Composable
+private fun rememberReduceMotion(): Boolean {
+    val context = LocalContext.current
+    val resolver = context.contentResolver
+    fun read() = android.provider.Settings.Global.getFloat(resolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+    val still = remember(context) { mutableStateOf(read()) }
+    DisposableEffect(resolver) {
+        val observer = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) { still.value = read() }
+        }
+        resolver.registerContentObserver(android.provider.Settings.Global.getUriFor(android.provider.Settings.Global.ANIMATOR_DURATION_SCALE), false, observer)
+        still.value = read()
+        onDispose { resolver.unregisterContentObserver(observer) }
+    }
+    return still.value
 }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
@@ -450,4 +666,10 @@ private fun ProgressBadge(fraction: Float, complete: Boolean, celebrate: Boolean
             }
         }
     }
+}
+
+/** A stroke under way: where its brush last was (canvas units), and whether it finished a color. */
+private class Stroking {
+    var last = Offset.Zero
+    var finishedColor = false
 }

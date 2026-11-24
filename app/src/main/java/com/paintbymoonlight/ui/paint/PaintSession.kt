@@ -2,7 +2,6 @@ package com.paintbymoonlight.ui.paint
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.paintbymoonlight.core.Scene
 import com.paintbymoonlight.data.Progress
@@ -11,15 +10,24 @@ import kotlin.math.hypot
 /** What a tap on the canvas did. */
 sealed interface Tap {
     data class Painted(val region: Int, val finishedPaint: Boolean, val finishedPainting: Boolean) : Tap
-    /** The area is another paint's: its swatch should shake. */
-    data class OtherPaint(val paint: Int) : Tap
+    /** The area is another paint's: its swatch shakes and its number pops up. */
+    data class OtherPaint(val region: Int, val paint: Int) : Tap
     data object Nothing : Tap
 }
 
+/** What happened to the painting, for the canvas to animate and the haptics to play. */
+sealed interface PaintEvent {
+    /** [region] was painted from the canvas point [x], [y]. */
+    data class Painted(val region: Int, val x: Float, val y: Float, val finishedPaint: Boolean, val finishedPainting: Boolean) : PaintEvent
+    data class Undone(val region: Int) : PaintEvent
+    data class Rejected(val region: Int) : PaintEvent
+}
+
 /**
- * The rules of painting one painting: which paint is in hand, what a tap paints, undo, and
- * what is left of each paint. Compose reads [changes] and [selected]; the canvas and palette
- * redraw when they move.
+ * The rules of painting one painting, as iOS's `PaintingSession` keeps them: which paint is in
+ * hand, what a tap paints (a tap just beside a small area of the paint in hand still finds it),
+ * undo, and what is left of each paint. Compose reads [changes] and [selected]; the canvas and
+ * palette redraw when they move, and [listen] hears each fill, undo and rejected tap.
  */
 class PaintSession(val scene: Scene, val progress: Progress) {
     /** Bumped by every fill and undo. */
@@ -27,16 +35,19 @@ class PaintSession(val scene: Scene, val progress: Progress) {
         private set
     var selected by mutableIntStateOf(-1)
         private set
-    /** The area most recently painted, for the canvas's reveal; null after an undo. */
-    var lastFill by mutableStateOf<Int?>(null)
-        private set
 
     private val remaining = IntArray(scene.paints.size)
+    private val listeners = ArrayList<(PaintEvent) -> Unit>()
+    /** Fills per undo step, newest last: a tap is one, a stroke all it painted. Fills from before this visit undo one by one. */
+    private val steps = ArrayList<Int>()
+    /** The paint a stroke under way paints with, and how many areas it has painted. */
+    private var strokePaint: Int? = null
+    private var strokeFills = 0
 
     init {
         scene.regions.forEachIndexed { i, r -> if (!progress.isPainted(i)) remaining[r.paint]++ }
         selected = progress.inHand.takeIf { it in scene.paints.indices && remaining[it] > 0 }
-            ?: firstPaintLeft()
+            ?: openingPaint()
             ?: -1
     }
 
@@ -46,6 +57,14 @@ class PaintSession(val scene: Scene, val progress: Progress) {
     fun total(paint: Int) = scene.regionsByPaint[paint].size
     fun isPaintFinished(paint: Int) = remaining[paint] == 0
 
+    /** Hears every event until the returned function is called. */
+    fun listen(listener: (PaintEvent) -> Unit): () -> Unit {
+        listeners.add(listener)
+        return { listeners.remove(listener) }
+    }
+
+    private fun emit(event: PaintEvent) = listeners.toList().forEach { it(event) }
+
     fun select(paint: Int) {
         if (paint in scene.paints.indices) {
             selected = paint
@@ -53,53 +72,142 @@ class PaintSession(val scene: Scene, val progress: Progress) {
         }
     }
 
-    /** Paints the area under a canvas point with the paint in hand, if it is that paint's. */
-    fun tap(x: Float, y: Float): Tap {
-        val region = scene.regionAt(x, y) ?: return Tap.Nothing
-        if (progress.isPainted(region)) return Tap.Nothing
-        val paint = scene.regions[region].paint
-        if (paint != selected) return Tap.OtherPaint(paint)
-        return fill(region)
+    /**
+     * Paints the area under a canvas point with the paint in hand, if it is that paint's; else
+     * the nearest unpainted area of that paint within [tolerance] canvas units (a fingertip on
+     * screen), so a slightly imprecise tap on a small area still lands.
+     */
+    fun tap(x: Float, y: Float, tolerance: Float = 0f): Tap {
+        val hit = scene.regionAt(x, y)
+        val target = if (hit != null && !progress.isPainted(hit) && scene.regions[hit].paint == selected) hit
+        else nearestUnpainted(x, y, tolerance)
+        if (target != null) return fill(target, x, y).also { if (it is Tap.Painted) steps.add(1) }
+        if (hit == null || progress.isPainted(hit)) return Tap.Nothing
+        emit(PaintEvent.Rejected(hit))
+        return Tap.OtherPaint(hit, scene.regions[hit].paint)
     }
 
-    private fun fill(region: Int): Tap {
+    private fun nearestUnpainted(x: Float, y: Float, tolerance: Float): Int? {
+        if (tolerance <= 0f || selected !in scene.paints.indices) return null
+        var best: Int? = null
+        var bestDistance = tolerance
+        for (r in scene.regionsByPaint[selected]) {
+            if (progress.isPainted(r)) continue
+            val b = scene.regions[r].bounds
+            if (x < b.left - bestDistance || x > b.right + bestDistance || y < b.top - bestDistance || y > b.bottom + bestDistance) continue
+            val d = scene.regions[r].distanceTo(x, y)
+            if (d <= bestDistance) {
+                best = r
+                bestDistance = d
+            }
+        }
+        return best
+    }
+
+    private fun fill(region: Int, x: Float, y: Float): Tap {
         val paint = scene.regions[region].paint
         if (!progress.paint(region)) return Tap.Nothing
         remaining[paint]--
-        lastFill = region
         val finishedPaint = remaining[paint] == 0
         if (finishedPaint) {
             // The next paint left after this one, coming round, as iOS advances.
             nextPaintLeft(after = paint)?.let { select(it) }
         }
         changes++
+        emit(PaintEvent.Painted(region, x, y, finishedPaint, progress.isComplete))
         return Tap.Painted(region, finishedPaint, progress.isComplete)
     }
 
+    /**
+     * Takes the last step back: a tap's fill, or everything a stroke painted. The paint in hand
+     * stays in hand, as on iOS; a finished painting, which holds none, takes up the undone
+     * area's. Returns the last area undone. Undone mid-stroke, the stroke ends there, and the
+     * step taken back is what it had painted; the rest of the drag paints nothing.
+     */
     fun undo(): Int? {
-        val region = progress.undo() ?: return null
-        val paint = scene.regions[region].paint
-        remaining[paint]++
-        select(paint)
-        lastFill = null
-        changes++
-        return region
+        if (strokePaint != null) endStroke()
+        var last: Int? = null
+        repeat(steps.removeLastOrNull() ?: 1) {
+            val region = progress.undo() ?: return@repeat
+            val paint = scene.regions[region].paint
+            remaining[paint]++
+            if (selected !in scene.paints.indices || remaining[selected] == 0) select(paint)
+            changes++
+            emit(PaintEvent.Undone(region))
+            last = region
+        }
+        return last
+    }
+
+    /** A drag begins: it paints with the paint in hand, even once finishing it moves the hand on. */
+    fun beginStroke(): Boolean {
+        if (selected !in scene.paints.indices || isComplete) return false
+        strokePaint = selected
+        strokeFills = 0
+        return true
+    }
+
+    /**
+     * Paints every unpainted area of the stroke's paint that a brush of [radius] canvas units
+     * touches moving from [ax], [ay] to [bx], [by], in the order it reaches them.
+     */
+    fun drag(ax: Float, ay: Float, bx: Float, by: Float, radius: Float): List<Tap.Painted> {
+        val paint = strokePaint ?: return emptyList()
+        val radius = radius.coerceIn(0f, CanvasLook.maxBrushRadius)
+        val dx = bx - ax
+        val dy = by - ay
+        val len2 = dx * dx + dy * dy
+        val found = scene.regionsByPaint[paint].filter { r ->
+            if (progress.isPainted(r)) return@filter false
+            val b = scene.regions[r].bounds
+            if (b.right < minOf(ax, bx) - radius || b.left > maxOf(ax, bx) + radius) return@filter false
+            if (b.bottom < minOf(ay, by) - radius || b.top > maxOf(ay, by) + radius) return@filter false
+            scene.regions[r].distanceToSegment(ax, ay, bx, by) <= radius
+        }.sortedBy { r ->
+            val b = scene.regions[r].bounds
+            if (len2 > 0f) ((b.centerX() - ax) * dx + (b.centerY() - ay) * dy) / len2 else 0f
+        }
+        return found.mapNotNull { (fill(it, bx, by) as? Tap.Painted)?.also { strokeFills++ } }
+    }
+
+    /** The stroke ends; everything it painted undoes together. Returns how many areas it painted. */
+    fun endStroke(): Int {
+        val fills = strokeFills
+        if (strokePaint != null && fills > 0) steps.add(fills)
+        strokePaint = null
+        strokeFills = 0
+        return fills
     }
 
     val canUndo get() = progress.paintedCount > 0
 
-    /** The unpainted area of [paint] nearest a canvas point: where Hint and Zen go next. */
+    /**
+     * The unpainted area of [paint] whose number is nearest a canvas point: where Hint and Zen
+     * go next (iOS's `showHint(near:)`).
+     */
     fun nextArea(paint: Int = selected, nearX: Float, nearY: Float): Int? {
         if (paint !in scene.paints.indices) return null
         return scene.regionsByPaint[paint]
             .filter { !progress.isPainted(it) }
             .minByOrNull {
-                val b = scene.regions[it].bounds
-                hypot(b.centerX() - nearX, b.centerY() - nearY)
+                val label = scene.labelOf[it]
+                if (label >= 0) hypot(scene.labels[label].x - nearX, scene.labels[label].y - nearY)
+                else hypot(scene.regions[it].bounds.centerX() - nearX, scene.regions[it].bounds.centerY() - nearY)
             }
     }
 
-    private fun firstPaintLeft(): Int? = scene.paints.indices.firstOrNull { remaining[it] > 0 }
+    /**
+     * A painting nobody has painted on opens on the paint of its largest area, so the first
+     * tap finds a big area whose number reads at the opening zoom (iOS's `OpeningColor`); one
+     * begun on its first paint left.
+     */
+    private fun openingPaint(): Int? {
+        if (progress.paintedCount == 0) {
+            // Ties go to the lower number.
+            scene.regions.maxWithOrNull(compareBy({ it.area }, { -it.paint }))?.let { return it.paint }
+        }
+        return scene.paints.indices.firstOrNull { remaining[it] > 0 }
+    }
 
     private fun nextPaintLeft(after: Int): Int? {
         val n = scene.paints.size

@@ -1,10 +1,11 @@
-// moonlight-probe <photo.ppm> [quick|relaxed|detailed] [--out template.pbnt]
+// moonlight-probe <photo.ppm> [quick|relaxed|detailed] [--out template.pbnt] [--scene scene.mlsc]
 //                 [--contours contours.pgm --drawing drawing.pgm] [--mask subjects.pgm] [--svg prefix]
 // moonlight-probe --shared <painting.moonlight>…
 //
 // Makes a painting from a PPM photo exactly as the Android app does (Engine.make) and prints
 // what it made and the FNV-1a hash of the encoded template. Run on Linux and on an Android
-// emulator (adb shell): scripts/emulator-tour.sh compares the two.
+// emulator (adb shell): scripts/emulator-tour.sh compares the two. --scene writes the scene the
+// canvas reads (Scene.swift), which scripts/read-scene.py lists.
 //
 // With --shared, reads each `.moonlight` file as the app opens one someone sent
 // (Exchange.read), prints what it holds, writes it back as the app sends one (Exchange.write,
@@ -30,13 +31,13 @@ var args = Array(CommandLine.arguments.dropFirst())
 if args.first == "--shared" {
     exit(sharedProbe(Array(args.dropFirst())))
 }
-@MainActor func option(_ name: String) -> String? {
+func option(_ name: String, in args: inout [String]) -> String? {
     guard let i = args.firstIndex(of: name), i + 1 < args.count else { return nil }
     defer { args.removeSubrange(i...(i + 1)) }
     return args[i + 1]
 }
-let outPath = option("--out"), contoursPath = option("--contours"), drawingPath = option("--drawing")
-let maskPath = option("--mask"), svgPrefix = option("--svg")
+let outPath = option("--out", in: &args), contoursPath = option("--contours", in: &args), drawingPath = option("--drawing", in: &args)
+let maskPath = option("--mask", in: &args), svgPrefix = option("--svg", in: &args)
 func fail(_ message: String) -> Never {
     _ = "moonlight-probe: \(message)\n".withCString { write(2, $0, strlen($0)) }
     exit(2)
@@ -47,8 +48,9 @@ func gray(_ path: String) -> EdgeMap {
     }
     return EdgeMap(width: image.width, height: image.height, values: stride(from: 0, to: image.pixels.count, by: 4).map { image.pixels[$0] })
 }
+let scenePath = option("--scene", in: &args)
 guard let path = args.first, let data = FileManager.default.contents(atPath: path) else {
-    let usage = "usage: moonlight-probe <photo.ppm> [quick|relaxed|detailed] [--out t.pbnt] [--contours c.pgm --drawing d.pgm] [--mask m.pgm] [--svg prefix]\n"
+    let usage = "usage: moonlight-probe <photo.ppm> [quick|relaxed|detailed] [--out t.pbnt] [--scene s.mlsc] [--contours c.pgm --drawing d.pgm] [--mask m.pgm] [--svg prefix]\n"
     _ = usage.withCString { write(2, $0, strlen($0)) }
     exit(2)
 }
@@ -79,11 +81,7 @@ print("""
     hash \(fnv1a(bytes))
     """)
 if let outPath { _ = FileManager.default.createFile(atPath: outPath, contents: Data(bytes)) }
-if let svgPrefix {
-    for (name, options) in [("template", SVGExport.Options()), ("painted", SVGExport.Options(painted: true, numbers: false))] {
-        _ = FileManager.default.createFile(atPath: "\(svgPrefix)-\(name).svg", contents: Data(SVGExport.render(made.template, options: options).utf8))
-    }
-}
+if let scenePath { _ = FileManager.default.createFile(atPath: scenePath, contents: Data(scene)) }
 if let svgPrefix {
     for (name, options) in [("template", SVGExport.Options()), ("painted", SVGExport.Options(painted: true, numbers: false))] {
         _ = FileManager.default.createFile(atPath: "\(svgPrefix)-\(name).svg", contents: Data(SVGExport.render(made.template, options: options).utf8))

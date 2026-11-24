@@ -3,8 +3,6 @@ package com.paintbymoonlight
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
-import android.graphics.Path
-import android.graphics.RectF
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import android.util.Log
@@ -15,7 +13,9 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.lifecycle.SavedStateHandle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.paintbymoonlight.core.Box
 import com.paintbymoonlight.core.Core
+import com.paintbymoonlight.core.Edge
 import com.paintbymoonlight.core.Label
 import com.paintbymoonlight.core.PaintingLength
 import com.paintbymoonlight.core.Paint
@@ -61,24 +61,23 @@ class PrintTest {
      */
     private fun scene(columns: Int, rows: Int, cell: Float, paints: Int, numberSize: Float, detail: Boolean = false): Scene {
         val palette = List(paints) { i ->
-            Paint(Color.HSVToColor(floatArrayOf(i * 360f / paints, 0.55f, 0.85f)), "Paint ${i + 1}")
+            val color = Color.HSVToColor(floatArrayOf(i * 360f / paints, 0.55f, 0.85f))
+            // An sRGB color, its P3 channels left at the sRGB values: a print reads only [Paint.color].
+            Paint(color, Color.red(color) / 255f, Color.green(color) / 255f, Color.blue(color) / 255f, "Paint ${i + 1}", "", "")
         }
         val regions = ArrayList<Region>()
         val labels = ArrayList<Label>()
-        val lines = Path()
-        val polylines = ArrayList<FloatArray>()
+        val edges = ArrayList<Edge>()
         for (r in 0 until rows) for (c in 0 until columns) {
             val x = c * cell
             val y = r * cell
             val loop = floatArrayOf(x, y, x + cell, y, x + cell, y + cell, x, y + cell)
-            val path = Path().apply { addRect(x, y, x + cell, y + cell, Path.Direction.CW) }
             val isDetail = detail && (r + c) % 7 == 0
-            regions += Region((r * 3 + c) % paints, cell * cell, isDetail, RectF(x, y, x + cell, y + cell), path, listOf(loop))
-            labels += Label(x + cell / 2, y + cell / 2, if (isDetail) numberSize / 2 else numberSize, regions.size - 1)
-            lines.addRect(x, y, x + cell, y + cell, Path.Direction.CW)
-            polylines += floatArrayOf(x, y, x + cell, y, x + cell, y + cell, x, y + cell, x, y)
+            regions += Region((r * 3 + c) % paints, cell * cell, isDetail, Box(x, y, x + cell, y + cell), listOf(loop))
+            labels += Label(x + cell / 2, y + cell / 2, if (isDetail) numberSize / 2 else numberSize, regions.size - 1, cell / 2)
+            edges += Edge(regions.size - 1, Edge.OUTSIDE, true, floatArrayOf(x, y, x + cell, y, x + cell, y + cell, x, y + cell, x, y))
         }
-        return Scene(columns * cell, rows * cell, palette, regions, lines, labels, Path(), polylines, emptyList())
+        return Scene(columns * cell, rows * cell, false, palette, regions, edges, labels, emptyList())
     }
 
     private fun pages(pdf: ByteArray, name: String): Int {
