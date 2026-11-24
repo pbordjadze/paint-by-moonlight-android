@@ -35,7 +35,8 @@ internal object PrintPage {
 
     /** Draws a page's title and [detail] across the top of [content]; returns the body below them. */
     fun header(canvas: Canvas, content: RectF, title: String, detail: String): RectF {
-        val titlePaint = text(17f, bold = true, color = gray(0.1f))
+        // Titles in the serif the numerals and the app's titles are set in.
+        val titlePaint = text(17f, color = gray(0.1f)).apply { typeface = Typeface.create(Typeface.SERIF, 500, false) }
         canvas.drawText(ellipsized(title, titlePaint, content.width() * 0.7f), content.left, content.top + 14f, titlePaint)
         canvas.drawText(detail, content.right, content.top + 13f, text(9f, color = gray(0.45f), align = Paint.Align.RIGHT))
         canvas.drawLine(content.left, content.top + 24f, content.right, content.top + 24f, stroke(gray(0.85f), 0.5f))

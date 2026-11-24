@@ -196,10 +196,12 @@ private fun Choices(model: BigSheetViewModel, modifier: Modifier) {
         Spacer(Modifier.height(16.dp))
 
         Label("Size")
+        // Named the way the preview draws it, so the chip and the sheet's caption read alike.
+        val wide = model.isWide
         Connected(
             options = product.surface.products,
             selected = product,
-            label = { sizeText(it.shortInches.toFloat(), it.longInches.toFloat()) },
+            label = { it.sizeText(wide) },
             onSelect = model::choose,
         )
         Spacer(Modifier.height(16.dp))
@@ -311,7 +313,7 @@ private fun Notes(model: BigSheetViewModel) {
  */
 @Composable
 private fun Preview(model: BigSheetViewModel) {
-    val wide = model.scene?.let { it.width > it.height } ?: false
+    val wide = model.isWide
     val short by animateFloatAsState(model.product.shortInches.toFloat(), MaterialTheme.motionScheme.defaultSpatialSpec(), label = "short")
     val long by animateFloatAsState(model.product.longInches.toFloat(), MaterialTheme.motionScheme.defaultSpatialSpec(), label = "long")
     val sheetW = if (wide) long else short
@@ -319,7 +321,8 @@ private fun Preview(model: BigSheetViewModel) {
     val pageW = if (wide) 11f else 8.5f
     val pageH = if (wide) 8.5f else 11f
     val gap = 1.5f
-    val caption = 28.dp
+    // Two lines under the page (what it is, its size), one under the sheet.
+    val caption = 44.dp
     BoxWithConstraints(Modifier.fillMaxWidth().height(320.dp).padding(vertical = 16.dp)) {
         val unit: Dp = min(maxWidth.value / (sheetW + gap + pageW), (maxHeight - caption).value / max(sheetH, pageH)).dp
         Row(
@@ -330,18 +333,26 @@ private fun Preview(model: BigSheetViewModel) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.clearAndSetSemantics {
-                    contentDescription = "The sheet as it will print, ${sizeText(model.product.shortInches.toFloat(), model.product.longInches.toFloat())}"
+                    contentDescription = "The sheet as it will print, ${model.product.sizeText(wide)}"
                 },
             ) {
                 Paper(model.picture, unit * sheetW, unit * sheetH)
                 Spacer(Modifier.height(8.dp))
-                Text(sizeText(if (wide) model.product.longInches.toFloat() else model.product.shortInches.toFloat(),
-                    if (wide) model.product.shortInches.toFloat() else model.product.longInches.toFloat()), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(model.product.sizeText(wide), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clearAndSetSemantics { }) {
+            // The same picture on a letter page, the paper a home printer takes, for scale.
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.clearAndSetSemantics { contentDescription = "For scale, a letter page, ${sizeText(pageW, pageH)}" },
+            ) {
                 Paper(model.pagePicture, unit * pageW, unit * pageH)
                 Spacer(Modifier.height(8.dp))
-                Text(sizeText(pageW, pageH), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "Letter page\n${sizeText(pageW, pageH)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
             }
         }
     }
@@ -369,7 +380,8 @@ private fun Paper(picture: Bitmap?, width: Dp, height: Dp) {
 
 /**
  * Google Pay where the relay takes it (its quote says how) and the device can; a test order,
- * unpaid, while the relay doesn't take it.
+ * unpaid, while the relay doesn't take it. The button says Order Print either way: a test is
+ * said in a note under it, only while the relay is its sandbox.
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -398,17 +410,27 @@ private fun OrderBar(
                     enabled = ready,
                     modifier = Modifier.fillMaxWidth().height(56.dp),
                 )
-                offered == null -> Button(
-                    onClick = model::placeTestOrder,
-                    enabled = ready,
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                ) {
-                    if (model.placing) {
-                        LoadingIndicator(Modifier.size(28.dp), color = MaterialTheme.colorScheme.onPrimary)
-                    } else {
-                        Icon(Icons.Rounded.LocalShipping, null, Modifier.size(ButtonDefaults.IconSize))
-                        Spacer(Modifier.width(ButtonDefaults.IconSpacing))
-                        Text("Place Test Order")
+                offered == null -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Button(
+                        onClick = model::placeTestOrder,
+                        enabled = ready,
+                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                    ) {
+                        if (model.placing) {
+                            LoadingIndicator(Modifier.size(28.dp), color = MaterialTheme.colorScheme.onPrimary)
+                        } else {
+                            Icon(Icons.Rounded.LocalShipping, null, Modifier.size(ButtonDefaults.IconSize))
+                            Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+                            Text("Order Print")
+                        }
+                    }
+                    if (quote?.sandbox != null) {
+                        Text(
+                            "Test payment: nothing is charged or printed.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
                     }
                 }
                 else -> Text(
@@ -465,6 +487,10 @@ private fun Confirmation(picture: Bitmap?, placed: PrintRelay.Placed, modifier: 
         )
     }
 }
+
+/** A sheet's size as drawn: its long side across for a wide painting, else its short side. */
+private fun BigSheetProduct.sizeText(wide: Boolean): String =
+    if (wide) sizeText(longInches.toFloat(), shortInches.toFloat()) else sizeText(shortInches.toFloat(), longInches.toFloat())
 
 /** A size as the painter measures, width by height: inches where they're used, else centimeters. */
 private fun sizeText(width: Float, height: Float): String {

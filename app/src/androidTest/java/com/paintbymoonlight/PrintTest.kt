@@ -170,7 +170,7 @@ class PrintTest {
             assertEquals(print.pageCount, pages(print.pdf(), "parrots"))
             assertTrue(print.smallestNumber(detail = false)!! >= Sheets.MINIMUM_NUMBER - 1e-3f)
             val meta = PaintingMeta(
-                id = Library.newId(), title = "Parrots to print", created = System.currentTimeMillis(),
+                id = Library.newId(), title = "Parrots", created = System.currentTimeMillis(),
                 length = PaintingLength.Relaxed.name, seed = 7, pipelineVersion = Core.pipelineVersion,
                 settings = made.settingsJson, regionCount = scene.regions.size,
                 nicknameVersion = Core.NICKNAME_VERSION, aspect = scene.width / scene.height,
