@@ -46,6 +46,7 @@ jobs:
           path: |
             ~/toolchains
             ~/.swiftpm/swift-sdks
+            ~/.config/swiftpm
           key: toolchains-swift-${{ env.SWIFT_VERSION }}-ndk-${{ env.NDK_VERSION }}
 
       - name: Install Swift, its Android SDK and the NDK
@@ -66,7 +67,9 @@ jobs:
           if ! swift sdk list | grep -q _android; then
             swift sdk install "https://download.swift.org/swift-${SWIFT_VERSION}-release/android-sdk/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE_android.artifactbundle.tar.gz" --checksum "$SWIFT_ANDROID_SDK_CHECKSUM"
           fi
-          ANDROID_NDK_HOME="$HOME/toolchains/android-ndk-${NDK_VERSION}" bash ~/.swiftpm/swift-sdks/swift-${SWIFT_VERSION}-RELEASE_android.artifactbundle/swift-android/scripts/setup-android-sdk.sh
+          # Where SwiftPM keeps installed SDKs differs between hosts (~/.swiftpm, ~/.config/swiftpm, …).
+          setup=$(find "$HOME" -path "*swift-${SWIFT_VERSION}-RELEASE_android.artifactbundle/swift-android/scripts/setup-android-sdk.sh" -print -quit)
+          ANDROID_NDK_HOME="$HOME/toolchains/android-ndk-${NDK_VERSION}" bash "$setup"
           swift --version
 
       - name: Build the core for Android
