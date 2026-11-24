@@ -10,6 +10,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import com.paintbymoonlight.ui.paintingBounds
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import java.io.File
 import android.view.HapticFeedbackConstants
@@ -170,6 +171,7 @@ private fun Painting(
     // A tap that painted nothing, so a second one close by and soon is a double tap (Whole
     // painting). A tap that paints is never held back waiting to see whether a second follows.
     val lastMiss = remember { arrayOfNulls<Pair<Long, Offset>>(1) }
+    val hintJob = remember { arrayOfNulls<Job>(1) }
     val inset = 24 * density
     val finishedInset = 12 * density
     val scene = session.scene
@@ -199,7 +201,9 @@ private fun Painting(
         val next = session.nextArea(nearX = center.x, nearY = center.y) ?: return
         val b = scene.regions[next].bounds
         val fit = fitScale(camera.viewport, scene.width, scene.height, inset)
-        scope.launch {
+        // A new hint takes over from one still beating, rather than both driving the pulse.
+        if (hint) hintJob[0]?.cancel()
+        val job = scope.launch {
             camera.flyToArea(b.left, b.top, b.right, b.bottom, minScale = fit, maxScale = fit * 12)
             if (hint) {
                 pulse.region = next
@@ -210,11 +214,11 @@ private fun Painting(
                         pulse.strength.animateTo(if (beat < 2) 0.35f else 0f, pulseSpec)
                     }
                 } finally {
-                    pulse.strength.snapTo(0f)
-                    if (pulse.region == next) pulse.region = null
+                    pulse.region = null
                 }
             }
         }
+        if (hint) hintJob[0] = job
     }
 
     fun flyToFit() {
