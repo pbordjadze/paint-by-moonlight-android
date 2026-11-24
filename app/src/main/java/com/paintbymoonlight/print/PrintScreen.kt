@@ -4,6 +4,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.icu.util.LocaleData
 import android.icu.util.ULocale
+import android.util.LruCache
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -180,13 +181,20 @@ fun PrintScreen(model: PrintViewModel, onBack: () -> Unit, onBigSheet: (() -> Un
 private fun Pages(document: TemplatePrint) {
     val pager = rememberPagerState { document.pageCount }
     val aspect = document.pageWidth / document.pageHeight.toFloat()
+    // The last few full pages, so swiping back shows one at once, without a quick pass first.
+    val drawn = remember(document) { LruCache<Int, Bitmap>(KEPT_PAGES) }
     HorizontalPager(pager, Modifier.fillMaxWidth().height(340.dp), key = { "$it·${document.choices}" }) { index ->
-        // A quick small pass first, so the page shows at once, then the full one in its place.
-        val image by produceState<Pair<Bitmap, Boolean>?>(null, document, index) {
+        val image by produceState(drawn[index]?.let { it to true }, document, index) {
+            if (value != null) return@produceState
             // Choices changed under a drawing: it stops where it is rather than finishing a stale page.
             val job = coroutineContext.job
-            value = withContext(Dispatchers.Default) { document.pageImage(index, QUICK_SIDE) { !job.isActive } } to false
-            value = withContext(Dispatchers.Default) { document.pageImage(index, FULL_SIDE) { !job.isActive } } to true
+            // A quick small pass first, for the page in view only, so it shows at once.
+            if (index == pager.currentPage) {
+                value = withContext(Dispatchers.Default) { document.pageImage(index, QUICK_SIDE) { !job.isActive } } to false
+            }
+            val full = withContext(Dispatchers.Default) { document.pageImage(index, FULL_SIDE) { !job.isActive } }
+            drawn.put(index, full)
+            value = full to true
         }
         Box(Modifier.fillMaxSize().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
             Box(
@@ -222,6 +230,7 @@ private fun Pages(document: TemplatePrint) {
 /** The preview's quick first pass and its full drawing, in px on the page's long side. */
 private const val QUICK_SIDE = 360
 private const val FULL_SIDE = 1100
+private const val KEPT_PAGES = 4
 
 /** Which page, and what it is: the sheets laid together, or its place among the pages. */
 private fun caption(document: TemplatePrint, index: Int): String =
