@@ -63,10 +63,18 @@ class BigSheetViewModel(
     var failure by mutableStateOf<OrderFailure?>(null)
         private set
 
-    enum class OrderFailure { Declined, Pending, PriceMoved, PaymentDeclined, GooglePay, Other }
+    enum class OrderFailure { Declined, Pending, PriceMoved, PaymentDeclined, Refunded, GooglePay, Address, Other }
 
-    /** One order's key for every try of it, until it is placed or refused. */
-    private var orderKey = PrintRelay.newKey()
+    /** The quote Google Pay's sheet shows, which the painter agrees to by paying. */
+    private var agreed: BigSheetQuote? = null
+
+    /**
+     * Each sheet's order key, the same for every try of one order until it is placed or certainly
+     * refused; kept on disk once a try starts ([PendingOrders]), so leaving mid order can't
+     * order it twice.
+     */
+    private val keys = mutableMapOf<String, String>()
+    private val pending = PendingOrders(library.folder(id))
     private var upload: Upload? = null
     private var quoteJob: Job? = null
     private var drawJob: Job? = null
@@ -81,6 +89,7 @@ class BigSheetViewModel(
     init {
         viewModelScope.launch {
             try {
+                keys.putAll(pending.load())
                 val meta = library.paintings.value.firstOrNull { it.id == id } ?: error("no painting $id")
                 title = meta.title
                 val loaded = Core.scene(library.template(id), meta.seed)
@@ -103,9 +112,8 @@ class BigSheetViewModel(
 
     fun choose(next: BigSheetProduct) {
         if (next == product) return
+        // Another size is another order, under its own key.
         product = next
-        // Another size is another order: an earlier try's key never answers for it.
-        orderKey = PrintRelay.newKey()
         draw()
         fetchQuote()
     }
@@ -155,15 +163,18 @@ class BigSheetViewModel(
         }
     }
 
+    private fun keyFor(product: BigSheetProduct): String = keys.getOrPut(product.id) { PrintRelay.newKey() }
+
     /** The sheet sent under the order's key, once per key; a failed send goes again. */
     private fun sendSheet(): Deferred<Unit> {
-        val key = orderKey
         val product = product
+        val key = keyFor(product)
         upload?.let { if (it.key == key && it.product == product && !it.failed) return it.task }
         val scene = scene ?: error("no scene")
         val title = title
         lateinit var sent: Upload
-        val task = viewModelScope.async(start = CoroutineStart.LAZY) {
+        val relay = relay
+        val task = PendingOrders.scope.async(start = CoroutineStart.LAZY) {
             try {
                 val pdf = withContext(Dispatchers.Default) { SheetDrawing(scene, title, product.shortPoints, product.longPoints).pdf() }
                 relay.upload(pdf, key)
@@ -178,9 +189,10 @@ class BigSheetViewModel(
         return task
     }
 
-    /** Google Pay's sheet is about to open: the sheet goes up while the painter looks it over. */
-    fun willPay() {
+    /** Google Pay's sheet is about to open at [quote]'s price: the sheet goes up while the painter looks it over. */
+    fun willPay(quote: BigSheetQuote) {
         if (scene == null) return
+        agreed = quote
         placing = true
         failure = null
         sendSheet()
@@ -196,12 +208,13 @@ class BigSheetViewModel(
         failure = OrderFailure.GooglePay
     }
 
-    /** Google Pay paid at [agreed]'s price: the order goes to the relay with Stripe's token. */
-    fun paid(data: PaymentData, agreed: BigSheetQuote) {
+    /** Google Pay paid at the agreed price: the order goes to the relay with Stripe's token. */
+    fun paid(data: PaymentData) {
+        val agreed = agreed
         val paid = GooglePay.paid(data)
-        if (paid == null) {
+        if (agreed == null || paid == null) {
             placing = false
-            failure = OrderFailure.Other
+            failure = if (agreed == null) OrderFailure.GooglePay else OrderFailure.Address
             return
         }
         val payment = BigSheetPayment(
@@ -219,19 +232,32 @@ class BigSheetViewModel(
         place(BigSheetRecipient.testOrder, null)
     }
 
+    /**
+     * Places the order in the app's scope, not the screen's: once a try starts, its key is on
+     * disk, and leaving the screen neither drops the order nor lets a later try order it again.
+     */
     private fun place(recipient: BigSheetRecipient, payment: BigSheetPayment?) {
         val product = product
-        viewModelScope.launch {
+        val key = keyFor(product)
+        val sheet = sendSheet()
+        val relay = relay
+        val pending = pending
+        PendingOrders.scope.launch {
             try {
-                // The key as it stands now: a refused try gave its key up, and the sheet goes up again under the new one.
-                val key = orderKey
-                sendSheet().await()
-                placed = relay.order(product, recipient, payment, key)
+                pending.put(product, key)
+                sheet.await()
+                val order = relay.order(product, recipient, payment, key)
+                pending.remove(product, key)
+                if (keys[product.id] == key) keys.remove(product.id)
+                placed = order
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Placing a big sheet's order failed", e)
-                settle(e)
+                if (settle(e, product)) {
+                    pending.remove(product, key)
+                    if (keys[product.id] == key) keys.remove(product.id)
+                }
             } finally {
                 placing = false
             }
@@ -239,27 +265,32 @@ class BigSheetViewModel(
     }
 
     /**
-     * After a try that failed: only one the relay refused (it gave the order up) takes a new key;
-     * one that may be under way, or whose answer never came, keeps it, so trying again can't order
-     * it twice.
+     * Says what went wrong with a try, and whether the relay certainly gave the order up, so it
+     * takes a new key. One that may be under way, or whose answer never came, keeps its key, so
+     * trying again can't order it twice.
      */
-    private fun settle(error: Exception) {
+    private fun settle(error: Exception, product: BigSheetProduct): Boolean {
         val status = (error as? PrintRelay.Failure.Refused)?.status
+        val dropped = status in DROPPED
         failure = when {
-            error is PrintRelay.Failure.Pending -> OrderFailure.Pending
             status == 451 -> OrderFailure.Declined
             status == 409 -> OrderFailure.PriceMoved
             status == 402 -> OrderFailure.PaymentDeclined
+            status == 410 -> OrderFailure.Refunded
+            error is PrintRelay.Failure.Pending || (status != null && !dropped) -> OrderFailure.Pending
             else -> OrderFailure.Other
         }
-        if (status != null) orderKey = PrintRelay.newKey()
         // A price that moved since it was shown is fetched again for the painter to see.
-        if (status == 409) fetchQuote()
+        if (status == 409 && product == this.product) fetchQuote()
+        return dropped
     }
 
     companion object {
         private const val TAG = "BigSheet"
         private const val LETTER_SHORT = 612
         private const val LETTER_LONG = 792
+
+        /** The relay's answers after which it certainly holds no order under the key (print.js's header). */
+        private val DROPPED = setOf(400, 402, 409, 410, 412, 413, 415, 429, 451, 502)
     }
 }
