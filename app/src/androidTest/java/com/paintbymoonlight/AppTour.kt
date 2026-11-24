@@ -2,14 +2,22 @@ package com.paintbymoonlight
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.util.Log
+import androidx.activity.compose.setContent
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.paintbymoonlight.core.Core
@@ -18,6 +26,9 @@ import com.paintbymoonlight.data.Library
 import com.paintbymoonlight.data.PaintingMeta
 import com.paintbymoonlight.data.Progress
 import com.paintbymoonlight.data.Thumbnails
+import com.paintbymoonlight.ui.create.CreateScreen
+import com.paintbymoonlight.ui.create.CreateViewModel
+import com.paintbymoonlight.ui.theme.MoonlightTheme
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.BeforeClass
@@ -29,10 +40,13 @@ import org.junit.runners.MethodSorters
 import java.io.File
 
 /**
- * The app on a device: the core makes paintings from two test photos (Kodak's parrots and
- * lighthouse), one left a third painted and one finished, and the tour photographs the gallery
- * and the painting screen. Screenshots land in the app's files/shots/, which CI pulls with
- * `run-as` (scripts/emulator-tour.sh).
+ * The app on a device, photographed for review. It starts with an empty gallery (first
+ * launch), opens the create screen on a test photo and starts making it, then the core makes
+ * two paintings from the test photos (Kodak's parrots and lighthouse), one left a third
+ * painted and one finished, and the tour goes through the gallery, a card's menu, the
+ * painting screen with Hint and More, the finished painting, Print it big, dark mode and a
+ * 1.3× font. Screenshots land in the app's files/shots/ as NN-name.png (sorted in tour
+ * order), which CI pulls with `run-as` (scripts/emulator-tour.sh).
  */
 @RunWith(AndroidJUnit4::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
@@ -41,22 +55,30 @@ class AppTour {
     val compose = createAndroidComposeRule<MainActivity>()
 
     companion object {
-        private val app get() = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as MoonlightApp
+        private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
+        private val app get() = instrumentation.targetContext.applicationContext as MoonlightApp
         private val shots get() = File(app.filesDir, "shots").apply { mkdirs() }
+        private var made = false
 
         @JvmStatic
         @BeforeClass
-        fun makePaintings() = runBlocking {
+        fun emptyLibrary() = runBlocking {
             val library = app.library
             library.awaitLoaded()
             library.paintings.value.forEach { library.delete(it.id) }
-            make(library, "lighthouse.jpg", "Lighthouse", PaintingLength.Quick, paintedShare = 1f)
-            make(library, "parrots.jpg", "Parrots", PaintingLength.Relaxed, paintedShare = 0.35f)
+            shots.listFiles()?.forEach { it.delete() }
+        }
+
+        /** The two paintings the rest of the tour looks at, made once. */
+        private fun ensurePaintings() = runBlocking {
+            if (made) return@runBlocking
+            make(app.library, "lighthouse.jpg", "Lighthouse", PaintingLength.Quick, paintedShare = 1f)
+            make(app.library, "parrots.jpg", "Parrots", PaintingLength.Relaxed, paintedShare = 0.35f)
+            made = true
         }
 
         private suspend fun make(library: Library, asset: String, title: String, length: PaintingLength, paintedShare: Float) {
-            val assets = InstrumentationRegistry.getInstrumentation().context.assets
-            val photo = assets.open(asset).use { BitmapFactory.decodeStream(it) }
+            val photo = instrumentation.context.assets.open(asset).use { BitmapFactory.decodeStream(it) }
             val start = System.nanoTime()
             val made = Core.make(photo, length)
             val seconds = (System.nanoTime() - start) / 1e9
@@ -76,37 +98,135 @@ class AppTour {
             library.add(meta, made.template, photo, Thumbnails.render(scene, Progress(scene.regions.size)))
             library.save(meta.id, progress.snapshot()) { Thumbnails.render(scene, progress) }
         }
+
+        private fun shell(command: String) {
+            ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command)).use { it.readBytes() }
+        }
     }
 
+    /**
+     * The whole screen as the device shows it (status bar, menus and dialogs included), once
+     * the app is idle; the root's own image where the device can't take one.
+     */
     private fun shoot(name: String) {
         compose.waitForIdle()
         Thread.sleep(600)
-        val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
+        save(name, instrumentation.uiAutomation.takeScreenshot() ?: compose.onRoot().captureToImage().asAndroidBitmap())
+    }
+
+    /** The app's window now, without waiting for its animations to end (the clock is paused). */
+    private fun capture(name: String) = save(name, compose.onRoot().captureToImage().asAndroidBitmap())
+
+    private fun save(name: String, bitmap: Bitmap) {
         File(shots, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
-    @Test
-    fun a_gallery() {
-        compose.waitUntil(10_000) { compose.onAllNodes(hasContentDescription("Parrots", substring = true)).fetchSemanticsNodes().isNotEmpty() }
-        shoot("1-gallery")
+    private fun waitFor(matcher: SemanticsMatcher, millis: Long = 20_000) =
+        compose.waitUntil(millis) { compose.onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty() }
+
+    private fun card(title: String) = hasContentDescription(title, substring = true)
+    private val canvas = SemanticsMatcher.expectValue(SemanticsProperties.ContentDescription, listOf("Painting canvas"))
+
+    private fun openPainting(title: String) {
+        waitFor(card(title))
+        compose.onNode(card(title)).performClick()
+        waitFor(canvas)
     }
 
     @Test
-    fun b_paintingInProgress() {
-        compose.waitUntil(10_000) { compose.onAllNodes(hasContentDescription("Parrots", substring = true)).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNode(hasContentDescription("Parrots", substring = true)).performClick()
-        compose.waitUntil(20_000) { compose.onAllNodes(hasContentDescription("Painting canvas")).fetchSemanticsNodes().isNotEmpty() }
-        shoot("2-painting")
+    fun a_emptyGallery() {
+        waitFor(hasText("Your photos, painted by numbers"), 10_000)
+        shoot("01-empty-gallery")
+    }
+
+    /** The system photo picker can't be driven, so the create screen is shown on its own with a test photo. */
+    @Test
+    fun b_create() {
+        val photo = File(app.cacheDir, "tour-photo.jpg")
+        instrumentation.context.assets.open("parrots.jpg").use { input -> photo.outputStream().use { input.copyTo(it) } }
+        val model = CreateViewModel(app.library, app.contentResolver, Uri.fromFile(photo))
+        compose.runOnUiThread {
+            compose.activity.setContent {
+                MoonlightTheme { CreateScreen(model = model, preferences = app.preferences, onBack = {}, onMade = {}) }
+            }
+        }
+        waitFor(hasContentDescription("Your photo"))
+        shoot("02-create")
+        compose.onNode(hasText("Start painting")).performClick()
+        waitFor(hasText("Mixing your paints", substring = true), 5_000)
+        Thread.sleep(600)
+        capture("03-making")
+        compose.runOnUiThread { model.cancel() }
+        // Had it finished first, the gallery's shots would show it too.
+        runBlocking { app.library.paintings.value.forEach { app.library.delete(it.id) } }
+    }
+
+    @Test
+    fun c_gallery() {
+        ensurePaintings()
+        waitFor(card("Parrots"), 10_000)
+        shoot("04-gallery")
+        compose.onNode(card("Parrots")).performTouchInput { longClick() }
+        waitFor(hasText("Rename"), 5_000)
+        shoot("05-card-menu")
+    }
+
+    @Test
+    fun d_paintingInProgress() {
+        ensurePaintings()
+        openPainting("Parrots")
+        shoot("06-painting")
+        // Paused, so the shot lands mid-pulse rather than after it.
+        compose.mainClock.autoAdvance = false
         compose.onNode(hasContentDescription("Hint: find the next area")).performClick()
-        Thread.sleep(1500)
-        shoot("3-hint")
+        compose.mainClock.advanceTimeBy(1_000)
+        capture("07-hint")
+        compose.mainClock.autoAdvance = true
+        compose.onNode(hasContentDescription("More")).performClick()
+        waitFor(hasText("Whole painting"), 5_000)
+        shoot("08-more-menu")
     }
 
     @Test
-    fun c_finished() {
-        compose.waitUntil(10_000) { compose.onAllNodes(hasContentDescription("Lighthouse", substring = true)).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNode(hasContentDescription("Lighthouse", substring = true)).performClick()
-        compose.waitUntil(20_000) { compose.onAllNodes(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.ContentDescription, listOf("Painting canvas"))).fetchSemanticsNodes().isNotEmpty() }
-        shoot("4-finished")
+    fun e_finished() {
+        ensurePaintings()
+        openPainting("Lighthouse")
+        waitFor(hasText("Print it big"), 5_000)
+        shoot("09-finished")
+        compose.onNode(hasText("Print it big")).performClick()
+        waitFor(hasText("One Big Sheet"))
+        // No network in CI: the price either fails (Try Again) or never comes; show whichever.
+        try {
+            waitFor(hasText("Try Again"), 30_000)
+        } catch (e: ComposeTimeoutException) {
+            Log.i("AppTour", "no price yet: ${e.message}")
+        }
+        shoot("10-print")
+    }
+
+    @Test
+    fun f_dark() {
+        ensurePaintings()
+        try {
+            shell("cmd uimode night yes")
+            waitFor(card("Parrots"))
+            shoot("11-dark-gallery")
+            openPainting("Parrots")
+            shoot("12-dark-painting")
+        } finally {
+            shell("cmd uimode night no")
+        }
+    }
+
+    @Test
+    fun g_largeText() {
+        ensurePaintings()
+        try {
+            shell("settings put system font_scale 1.3")
+            openPainting("Parrots")
+            shoot("13-painting-large-text")
+        } finally {
+            shell("settings put system font_scale 1.0")
+        }
     }
 }

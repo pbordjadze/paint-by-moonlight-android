@@ -204,9 +204,10 @@ private fun Painting(
             if (hint) {
                 pulse.region = next
                 try {
-                    repeat(3) {
+                    // Three beats that never quite go out until the last.
+                    repeat(3) { beat ->
                         pulse.strength.animateTo(1f, pulseSpec)
-                        pulse.strength.animateTo(0f, pulseSpec)
+                        pulse.strength.animateTo(if (beat < 2) 0.35f else 0f, pulseSpec)
                     }
                 } finally {
                     pulse.strength.snapTo(0f)
