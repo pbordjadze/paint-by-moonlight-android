@@ -170,6 +170,10 @@ private fun Painting(
     val scope = rememberCoroutineScope()
     val view = LocalView.current
     val haptics = remember(view) { Haptics(view) }
+    val context = LocalContext.current
+    val sounds = remember(context) { Sounds(context) }
+    LaunchedEffect(sounds) { withContext(Dispatchers.Default) { sounds.prepare() } }
+    DisposableEffect(sounds) { onDispose { sounds.release() } }
     val density = LocalDensity.current.density
     val still = rememberReduceMotion()
     motion.still = still
@@ -305,6 +309,7 @@ private fun Painting(
                     darkBackdrop = darkBackdrop,
                     backdrop = android.graphics.Color.pack(paper.toArgb()),
                     modifier = Modifier.fillMaxSize(),
+                    stars = { sounds.skyOfComingFill() == Sky.Moon },
                     onTap = { screen ->
                         val p = camera.toCanvas(screen)
                         val now = SystemClock.uptimeMillis()
@@ -316,14 +321,20 @@ private fun Painting(
                                 model.changed()
                                 val area = scene.regions[tap.region].area
                                 val size = min(1f, kotlin.math.sqrt(area / (scene.width * scene.height)) * 6)
+                                sounds.paint(size)
                                 when {
                                     tap.finishedPainting -> {
+                                        // The painting's celebration is the one finale: its last paint has none of its own.
                                         haptics.celebrate()
+                                        sounds.celebrate()
                                         finishedHere = true
                                         finishedAt = System.currentTimeMillis()
                                         finish(fillSeconds = 0.9f)
                                     }
-                                    tap.finishedPaint -> haptics.colorComplete()
+                                    tap.finishedPaint -> {
+                                        haptics.colorComplete(size)
+                                        sounds.colorComplete()
+                                    }
                                     else -> haptics.paint(size)
                                 }
                                 if (!tap.finishedPainting && preferences.zenMode) {
@@ -347,6 +358,7 @@ private fun Painting(
                                     if (tap is Tap.OtherPaint) {
                                         shake = tap.paint to ((shake?.second ?: 0) + 1)
                                         haptics.reject()
+                                        sounds.reject()
                                     }
                                 }
                             }

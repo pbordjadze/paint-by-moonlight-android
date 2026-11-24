@@ -83,7 +83,7 @@ class CanvasMotion {
     }
 
     internal class Spread(val region: Int, val x: Float, val y: Float, val at: Moment, val seconds: Float, val radius: Float, val painted: Boolean)
-    internal class Sparkle(val x: Float, val y: Float, val size: Float, val at: Moment)
+    internal class Sparkle(val x: Float, val y: Float, val size: Float, val at: Moment, val star: Boolean)
 
     private val unstamped = ArrayList<Pair<Moment, Float>>()
     internal val spreads = ArrayList<Spread>()
@@ -166,6 +166,8 @@ fun PaintCanvas(
     backdrop: Long,
     modifier: Modifier = Modifier,
     showNumbers: Boolean = true,
+    /** Whether the fill's sparkles are stars: the Moon's, as its music turns. */
+    stars: () -> Boolean = { false },
 ) {
     val scene = session.scene
     val density = LocalDensity.current.density
@@ -175,6 +177,7 @@ fun PaintCanvas(
     val recorded = remember { Recorded() }
     val book = remember(scene) { if (scene.isColoringBook) bookLines(session) else null }
     val sparkle = remember { sparklePath() }
+    val star = remember { starPath() }
     val hatchTile = remember(density) { hatchTile(density) }
     val local = remember { Matrix() }
 
@@ -241,7 +244,7 @@ fun PaintCanvas(
                     if (!motion.still) {
                         val at = motion.moment(lasts = seconds + CanvasLook.wetSettle + 0.1f)
                         motion.spreads.add(CanvasMotion.Spread(event.region, event.x, event.y, at, seconds, radius, true))
-                        if (!event.finishedPainting) popSparkles(motion, scene, camera, density, event.region, seconds)
+                        if (!event.finishedPainting) popSparkles(motion, scene, camera, density, event.region, seconds, stars())
                     }
                     if (event.finishedPaint && !event.finishedPainting) {
                         motion.shine(region.paint, seconds + CanvasLook.shineDelay)
@@ -545,7 +548,7 @@ fun PaintCanvas(
                 canvas.save()
                 canvas.translate(s.x - side / 2, s.y - side / 2)
                 canvas.scale(side, side)
-                canvas.drawPath(sparkle, fill)
+                canvas.drawPath(if (s.star) star else sparkle, fill)
                 canvas.restore()
             }
         }
@@ -664,10 +667,39 @@ private fun sparklePath(pinch: Float = 0.133f): Path {
 }
 
 /**
+ * The Moon's star (iOS's `Sparkle.starPath`): the sparkle with shorter rays on its diagonals,
+ * their tips rounded and their lengths a touch uneven, as if inked by hand.
+ */
+private fun starPath(): Path {
+    val p = sparklePath()
+    val half = 0.5f
+    val base = half * 0.30f
+    val tip = half * 0.045f
+    listOf(0.68f, 0.60f, 0.65f, 0.58f).forEachIndexed { k, fraction ->
+        val angle = (-Math.PI / 4 + Math.PI / 2 * k).toFloat()
+        val length = half * fraction
+        val c = cos(angle)
+        val s = sin(angle)
+        fun x(a: Float, b: Float) = 0.5f + a * c - b * s
+        fun y(a: Float, b: Float) = 0.5f + a * s + b * c
+        val middle = (length - tip) / 2
+        val side = (base + tip) / 2
+        p.moveTo(x(0f, -base), y(0f, -base))
+        p.quadTo(x(middle, -side), y(middle, -side), x(length - tip, -tip), y(length - tip, -tip))
+        p.quadTo(x(length + tip * 0.35f, 0f), y(length + tip * 0.35f, 0f), x(length - tip, tip), y(length - tip, tip))
+        p.quadTo(x(middle, side), y(middle, side), x(0f, base), y(0f, base))
+        p.close()
+    }
+    return p
+}
+
+/**
  * Two gold sparkles pop at the area's edge, on its number's free circle, as the paint lands; not
  * where the area is too small on screen for them to read, nor more than one pair in 0.3 s.
  */
-private fun popSparkles(motion: CanvasMotion, scene: com.paintbymoonlight.core.Scene, camera: Camera, density: Float, region: Int, seconds: Float) {
+private fun popSparkles(
+    motion: CanvasMotion, scene: com.paintbymoonlight.core.Scene, camera: Camera, density: Float, region: Int, seconds: Float, star: Boolean,
+) {
     val labelIndex = scene.labelOf[region]
     if (labelIndex < 0) return
     val label = scene.labels[labelIndex]
@@ -679,6 +711,6 @@ private fun popSparkles(motion: CanvasMotion, scene: com.paintbymoonlight.core.S
     val size = (reach * 0.45f).coerceIn(10 * density, 22 * density)
     listOf(-0.7f, 2.3f).forEachIndexed { k, angle ->
         val at = motion.moment(delay = seconds * 0.8f + k * 0.08f, lasts = 0.8f)
-        motion.sparkles.add(CanvasMotion.Sparkle(cx + reach * cos(angle), cy + reach * sin(angle), size * if (k == 0) 1f else 0.7f, at))
+        motion.sparkles.add(CanvasMotion.Sparkle(cx + reach * cos(angle), cy + reach * sin(angle), size * if (k == 0) 1f else 0.7f, at, star))
     }
 }

@@ -66,10 +66,14 @@ class Haptics(private val view: View) {
         view.performHapticFeedback(HapticFeedbackConstants.REJECT)
     }
 
-    /** Every area of a paint is painted. */
-    fun colorComplete() {
+    /**
+     * The fill that finishes a paint: its tap, then three rising ones (in one pattern, since a
+     * second would cut the first off).
+     */
+    fun colorComplete(size: Float) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             composition(VibrationEffect.Composition.PRIMITIVE_CLICK)?.let {
+                it.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.45f + 0.4f * size.coerceIn(0f, 1f))
                 it.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.55f, 120)
                 it.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.75f, 60)
                 it.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.95f, 60)

@@ -158,7 +158,7 @@ class Camera {
         if (velocity.getDistance() < 50f) return
         fling = scope.launch {
             var last = Offset.Zero
-            AnimationState(Offset.VectorConverter, Offset.Zero, velocity).animateDecay(exponentialDecay(frictionMultiplier = 1.6f)) {
+            AnimationState(Offset.VectorConverter, Offset.Zero, velocity).animateDecay(exponentialDecay(frictionMultiplier = 0.5f)) {
                 val step = value - last
                 last = value
                 val before = offset
