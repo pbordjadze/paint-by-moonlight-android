@@ -25,7 +25,6 @@ import androidx.compose.material.icons.rounded.Brush
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.ContainedLoadingIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.HorizontalDivider
@@ -107,7 +106,7 @@ fun MuseumWorkScreen(id: String, library: Library, onPaint: (Picked) -> Unit, on
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
             if (work == null) {
-                if (state is MuseumLibrary.State.Loading) ContainedLoadingIndicator(Modifier.align(Alignment.Center))
+                if (state is MuseumLibrary.State.Loading) LoadingIndicator(Modifier.align(Alignment.Center))
                 else Text("This work isn’t in the Museum any more.", modifier = Modifier.align(Alignment.Center).padding(32.dp))
             } else {
                 WorkPage(work, catalog.museums[work.museum].orEmpty(), underWay, onPaint = {
