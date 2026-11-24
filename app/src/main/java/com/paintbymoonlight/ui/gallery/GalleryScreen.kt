@@ -82,6 +82,7 @@ fun GalleryScreen(
     onDelete: (String) -> Unit,
 ) {
     val paintings by library.paintings.collectAsStateWithLifecycle()
+    val loaded by library.loaded.collectAsStateWithLifecycle()
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     var renaming by remember { mutableStateOf<PaintingMeta?>(null) }
     var deleting by remember { mutableStateOf<PaintingMeta?>(null) }
@@ -104,7 +105,7 @@ fun GalleryScreen(
         },
     ) { padding ->
         if (paintings.isEmpty()) {
-            Empty(Modifier.padding(padding))
+            if (loaded) Empty(Modifier.padding(padding))
         } else {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = 160.dp),
@@ -194,8 +195,8 @@ private fun PaintingCard(
     modifier: Modifier = Modifier,
 ) {
     var menu by remember { mutableStateOf(false) }
-    // Reloaded whenever the painting's progress moves (the thumbnail is saved with it).
-    val image by produceState<ImageBitmap?>(null, thumbnail, meta.paintedCount) {
+    // Reloaded whenever progress is saved (the thumbnail is saved with it).
+    val image by produceState<ImageBitmap?>(null, thumbnail, meta.updated) {
         value = withContext(Dispatchers.IO) { BitmapFactory.decodeFile(thumbnail.path)?.asImageBitmap() }
     }
     val fraction = if (meta.regionCount > 0) meta.paintedCount / meta.regionCount.toFloat() else 0f

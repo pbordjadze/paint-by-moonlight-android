@@ -22,14 +22,16 @@ import PaintCore
 public enum Scene {
     public static let version: UInt32 = 1
 
-    public static func encode(_ template: Template, nicknameSeed: UInt64) -> [UInt8] {
+    /// `nicknameVersion` is the vocabulary the painting recorded when it was made (its
+    /// `meta.json`), so a later vocabulary never renames its paints.
+    public static func encode(_ template: Template, nicknameSeed: UInt64, nicknameVersion: Int) -> [UInt8] {
         var w = Writer()
         w.bytes(Array("MLSC".utf8))
         w.u32(version)
         w.f32(Float(template.width))
         w.f32(Float(template.height))
 
-        let names = ColorNickname.assign(template.palette, seed: nicknameSeed, version: ColorNickname.currentVersion)
+        let names = ColorNickname.assign(template.palette, seed: nicknameSeed, version: nicknameVersion)
         w.u32(UInt32(template.palette.count))
         for (i, paint) in template.palette.enumerated() {
             let rgb = ColorScience.okLabToEncoded(paint.oklab, space: .sRGB)

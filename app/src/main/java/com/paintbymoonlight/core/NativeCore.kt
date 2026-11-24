@@ -19,7 +19,7 @@ internal object NativeCore {
     @JvmStatic external fun make(job: Long, rgba: ByteArray, width: Int, height: Int, length: Int): Array<ByteArray>
 
     /** The scene (Scene.kt) of an encoded template; throws [CoreException]. */
-    @JvmStatic external fun scene(template: ByteArray, nicknameSeed: Long): ByteArray
+    @JvmStatic external fun scene(template: ByteArray, nicknameSeed: Long, nicknameVersion: Int): ByteArray
 }
 
 /** A failure the native core reports: 1 cancelled, 2 failed, 3 bad input. */

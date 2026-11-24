@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -11,7 +13,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
@@ -30,6 +31,7 @@ import com.paintbymoonlight.ui.gallery.GalleryScreen
 import com.paintbymoonlight.ui.paint.PaintScreen
 import com.paintbymoonlight.ui.paint.PaintViewModel
 import com.paintbymoonlight.ui.theme.MoonlightTheme
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -64,7 +66,6 @@ private fun MoonlightNav(app: MoonlightApp) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val library = app.library
-    LaunchedEffect(Unit) { library.load() }
 
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) nav.navigate(Routes.create(uri))
@@ -85,7 +86,7 @@ private fun MoonlightNav(app: MoonlightApp) {
         }
         composable(Routes.CREATE) { entry ->
             val photo = Uri.parse(entry.arguments?.getString("photo") ?: "")
-            val model = viewModel { CreateViewModel(library, context.contentResolver, photo) }
+            val model = viewModel { CreateViewModel(library, app.contentResolver, photo) }
             CreateScreen(
                 model = model,
                 preferences = app.preferences,
@@ -102,8 +103,14 @@ private fun MoonlightNav(app: MoonlightApp) {
                 model = model,
                 preferences = app.preferences,
                 onBack = { nav.popBackStack() },
-                onShare = { share(id) },
-                onPrint = { model.saveNow(); nav.navigate(Routes.print(id)) },
+                // Both read the painting from disk: wait for the last fill to be saved.
+                onShare = { scope.launch { model.saveNow().join(); sharePainting(context, library, id) } },
+                onPrint = {
+                    scope.launch {
+                        model.saveNow().join()
+                        nav.navigate(Routes.print(id))
+                    }
+                },
             )
         }
         composable(Routes.PRINT) { entry ->
@@ -116,15 +123,23 @@ private fun MoonlightNav(app: MoonlightApp) {
 
 /** Shares the painting as a PNG: finished, every area in its paint; in progress, as it stands. */
 private suspend fun sharePainting(context: Context, library: Library, id: String) {
-    val meta = library.paintings.value.firstOrNull { it.id == id } ?: return
-    val file = withContext(Dispatchers.Default) {
-        val scene = Core.scene(library.template(id), meta.seed)
-        val progress = library.progress(id, scene.regions.size)
-        val bitmap = if (progress.isComplete) Thumbnails.finished(scene) else Thumbnails.render(scene, progress, 2048)
-        val dir = File(context.cacheDir, "shared").apply { deleteRecursively(); mkdirs() }
-        File(dir, "${meta.title.replace(Regex("[^\\p{L}\\p{N} ._-]"), "")}.png").also { out ->
-            out.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+    val meta = library.meta(id) ?: return
+    val file = try {
+        withContext(Dispatchers.Default) {
+            val scene = Core.scene(library.template(id), meta.seed, meta.nicknameVersion)
+            val progress = library.progress(id, scene.regions.size)
+            val bitmap = if (progress.isComplete) Thumbnails.finished(scene) else Thumbnails.render(scene, progress, 2048)
+            val dir = File(context.cacheDir, "shared").apply { deleteRecursively(); mkdirs() }
+            File(dir, "${meta.title.replace(Regex("[^\\p{L}\\p{N} ._-]"), "").ifBlank { "Painting" }}.png").also { out ->
+                out.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            }
         }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.e("Share", "couldn't draw the painting to share", e)
+        Toast.makeText(context, "This painting couldn’t be shared.", Toast.LENGTH_SHORT).show()
+        return
     }
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
     val send = Intent(Intent.ACTION_SEND).apply {

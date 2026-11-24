@@ -30,6 +30,7 @@ import kotlin.random.Random
 /** Turns a picked photo into a painting: the photo shown, Painting Length chosen, then made. */
 class CreateViewModel(
     private val library: Library,
+    /** The application's, not an Activity's, since the model outlives a rotation. */
     private val resolver: ContentResolver,
     private val uri: Uri,
 ) : ViewModel() {
@@ -76,7 +77,7 @@ class CreateViewModel(
             try {
                 val seed = Random.nextLong()
                 val result = Core.make(bitmap, length) { progress = it }
-                val scene = Core.scene(result.template, seed)
+                val scene = Core.scene(result.template, seed, Core.NICKNAME_VERSION)
                 val meta = PaintingMeta(
                     id = Library.newId(),
                     title = SimpleDateFormat("MMMM d", Locale.getDefault()).format(Date()),
@@ -86,6 +87,8 @@ class CreateViewModel(
                     pipelineVersion = Core.pipelineVersion,
                     settings = result.settingsJson,
                     regionCount = scene.regions.size,
+                    nicknameVersion = Core.NICKNAME_VERSION,
+                    aspect = scene.width / scene.height,
                 )
                 val thumb = withContext(Dispatchers.Default) { Thumbnails.render(scene, Progress(scene.regions.size)) }
                 library.add(meta, result.template, bitmap, thumb)

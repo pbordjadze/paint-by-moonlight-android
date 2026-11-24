@@ -19,9 +19,17 @@ static void throw_status(JNIEnv *env, int32_t status) {
     if (e != NULL) (*env)->Throw(env, (jthrowable)e);
 }
 
+// Copies a buffer the core handed out into a new Java array and frees it. NULL when the copy
+// failed, with the Java exception (OutOfMemoryError) pending.
 static jbyteArray to_java(JNIEnv *env, uint8_t *bytes, int64_t count) {
     jbyteArray array = (*env)->NewByteArray(env, (jsize)count);
-    if (array != NULL) (*env)->SetByteArrayRegion(env, array, 0, (jsize)count, (const jbyte *)bytes);
+    if (array != NULL) {
+        (*env)->SetByteArrayRegion(env, array, 0, (jsize)count, (const jbyte *)bytes);
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->DeleteLocalRef(env, array);
+            array = NULL;
+        }
+    }
     mc_free(bytes);
     return array;
 }
@@ -52,23 +60,41 @@ JNIEXPORT jobjectArray JNICALL FN(make)(JNIEnv *env, jclass cls, jlong job, jbyt
         throw_status(env, status);
         return NULL;
     }
+    // Each step can leave an exception pending, after which no other JNI call is allowed: check
+    // after each, and free what the core handed out that was not yet copied.
     jclass byteArray = (*env)->FindClass(env, "[B");
-    jobjectArray result = byteArray ? (*env)->NewObjectArray(env, 2, byteArray, NULL) : NULL;
+    jobjectArray result = byteArray != NULL ? (*env)->NewObjectArray(env, 2, byteArray, NULL) : NULL;
+    if (result == NULL) {
+        mc_free(template_bytes);
+        mc_free(settings);
+        return NULL;
+    }
     jbyteArray t = to_java(env, template_bytes, template_count);
-    jbyteArray s = to_java(env, settings, settings_count);
-    if (result == NULL || t == NULL || s == NULL) return NULL;
+    if (t == NULL) {
+        mc_free(settings);
+        return NULL;
+    }
     (*env)->SetObjectArrayElement(env, result, 0, t);
+    if ((*env)->ExceptionCheck(env)) {
+        mc_free(settings);
+        return NULL;
+    }
+    jbyteArray s = to_java(env, settings, settings_count);
+    if (s == NULL) return NULL;
     (*env)->SetObjectArrayElement(env, result, 1, s);
+    if ((*env)->ExceptionCheck(env)) return NULL;
     return result;
 }
 
-JNIEXPORT jbyteArray JNICALL FN(scene)(JNIEnv *env, jclass cls, jbyteArray template_bytes, jlong nickname_seed) {
+JNIEXPORT jbyteArray JNICALL FN(scene)(JNIEnv *env, jclass cls, jbyteArray template_bytes, jlong nickname_seed,
+                                       jint nickname_version) {
     jsize count = (*env)->GetArrayLength(env, template_bytes);
     jbyte *bytes = (*env)->GetByteArrayElements(env, template_bytes, NULL);
     if (bytes == NULL) return NULL;
     uint8_t *out = NULL;
     int64_t out_count = 0;
-    int32_t status = mc_scene((const uint8_t *)bytes, count, (uint64_t)nickname_seed, &out, &out_count);
+    int32_t status = mc_scene((const uint8_t *)bytes, count, (uint64_t)nickname_seed, (int32_t)nickname_version, &out,
+                              &out_count);
     (*env)->ReleaseByteArrayElements(env, template_bytes, bytes, JNI_ABORT);
     if (status != 0) {
         throw_status(env, status);

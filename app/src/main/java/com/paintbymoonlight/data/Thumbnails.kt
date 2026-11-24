@@ -34,7 +34,8 @@ object Thumbnails {
     /** The finished painting, no lines: what a painter shares. */
     fun finished(scene: Scene, longSide: Int = 2048): Bitmap {
         val k = longSide / max(scene.width, scene.height)
-        val bitmap = Bitmap.createBitmap((scene.width * k).toInt(), (scene.height * k).toInt(), Bitmap.Config.ARGB_8888)
+        val bitmap = Bitmap.createBitmap(
+            (scene.width * k).toInt().coerceAtLeast(1), (scene.height * k).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         canvas.scale(k, k)
         val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL_AND_STROKE; strokeWidth = 0.6f }

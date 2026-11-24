@@ -48,7 +48,7 @@ class AppTour {
         @BeforeClass
         fun makePaintings() = runBlocking {
             val library = app.library
-            library.load()
+            library.awaitLoaded()
             library.paintings.value.forEach { library.delete(it.id) }
             make(library, "lighthouse.jpg", "Lighthouse", PaintingLength.Quick, paintedShare = 1f)
             make(library, "parrots.jpg", "Parrots", PaintingLength.Relaxed, paintedShare = 0.35f)
@@ -60,7 +60,7 @@ class AppTour {
             val start = System.nanoTime()
             val made = Core.make(photo, length)
             val seconds = (System.nanoTime() - start) / 1e9
-            val scene = Core.scene(made.template, 7)
+            val scene = Core.scene(made.template, 7, Core.NICKNAME_VERSION)
             Log.i("AppTour", "$asset: ${scene.regions.size} areas, ${scene.paints.size} paints in %.2f s".format(seconds))
             assertTrue(scene.regions.isNotEmpty())
             val progress = Progress(scene.regions.size)
@@ -71,9 +71,10 @@ class AppTour {
             val meta = PaintingMeta(
                 id = Library.newId(), title = title, created = System.currentTimeMillis(), length = length.name,
                 seed = 7, pipelineVersion = Core.pipelineVersion, settings = made.settingsJson, regionCount = scene.regions.size,
+                nicknameVersion = Core.NICKNAME_VERSION, aspect = scene.width / scene.height,
             )
             library.add(meta, made.template, photo, Thumbnails.render(scene, Progress(scene.regions.size)))
-            library.save(meta.id, progress.snapshot(), Thumbnails.render(scene, progress))
+            library.save(meta.id, progress.snapshot()) { Thumbnails.render(scene, progress) }
         }
     }
 

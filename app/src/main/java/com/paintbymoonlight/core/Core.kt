@@ -56,9 +56,15 @@ object Core {
             }
         }
 
-    /** The scene the canvas draws, with the paints' nicknames seeded by [nicknameSeed]. */
-    suspend fun scene(template: ByteArray, nicknameSeed: Long): Scene = withContext(Dispatchers.Default) {
-        Scene.read(NativeCore.scene(template, nicknameSeed))
+    /** The nickname vocabulary a new painting records (PaintCore's `ColorNickname.currentVersion`). */
+    const val NICKNAME_VERSION = 2
+
+    /**
+     * The scene the canvas draws, with the paints' nicknames seeded by [nicknameSeed] from the
+     * vocabulary the painting recorded ([nicknameVersion]), so a newer vocabulary never renames them.
+     */
+    suspend fun scene(template: ByteArray, nicknameSeed: Long, nicknameVersion: Int): Scene = withContext(Dispatchers.Default) {
+        Scene.read(NativeCore.scene(template, nicknameSeed, nicknameVersion))
     }
 
     private fun rgbaBytes(photo: Bitmap): ByteArray {

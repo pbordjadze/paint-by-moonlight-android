@@ -90,9 +90,9 @@ class BigSheetViewModel(
         viewModelScope.launch {
             try {
                 keys.putAll(pending.load())
-                val meta = library.paintings.value.firstOrNull { it.id == id } ?: error("no painting $id")
+                val meta = library.meta(id) ?: error("no painting $id")
                 title = meta.title
-                val loaded = Core.scene(library.template(id), meta.seed)
+                val loaded = Core.scene(library.template(id), meta.seed, meta.nicknameVersion)
                 pagePicture = withContext(Dispatchers.Default) {
                     SheetDrawing(loaded, meta.title, LETTER_SHORT, LETTER_LONG).image(500)
                 }

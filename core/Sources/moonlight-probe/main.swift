@@ -30,7 +30,7 @@ let seconds = Date().timeIntervalSince(start)
 let bytes = [UInt8](made.template.encoded())
 var hash: UInt64 = 0xcbf2_9ce4_8422_2325
 for b in bytes { hash = (hash ^ UInt64(b)) &* 0x100_0000_01b3 }
-let scene = Scene.encode(made.template, nicknameSeed: 1)
+let scene = Scene.encode(made.template, nicknameSeed: 1, nicknameVersion: ColorNickname.currentVersion)
 print("""
     photo \(image.width)x\(image.height), length \(length.rawValue)
     settings colors \(made.settings.colorCount) detail \(made.settings.detail) smoothness \(made.settings.smoothness)

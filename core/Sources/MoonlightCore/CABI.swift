@@ -60,16 +60,17 @@ public func mc_make(
     }
 }
 
-/// The scene the canvas draws (Scene.swift) of an encoded template.
+/// The scene the canvas draws (Scene.swift) of an encoded template, its paints named by the
+/// vocabulary version the painting recorded.
 @_cdecl("mc_scene")
 public func mc_scene(
-    _ bytes: UnsafePointer<UInt8>, _ count: Int64, _ nicknameSeed: UInt64,
+    _ bytes: UnsafePointer<UInt8>, _ count: Int64, _ nicknameSeed: UInt64, _ nicknameVersion: Int32,
     _ out: UnsafeMutablePointer<UnsafeMutablePointer<UInt8>?>, _ outCount: UnsafeMutablePointer<Int64>
 ) -> Int32 {
     guard count > 0 else { return 3 }
     do {
         let template = try Template(encoded: Data(bytes: bytes, count: Int(count)))
-        handOut(Scene.encode(template, nicknameSeed: nicknameSeed), out, outCount)
+        handOut(Scene.encode(template, nicknameSeed: nicknameSeed, nicknameVersion: Int(nicknameVersion)), out, outCount)
         return 0
     } catch {
         return 3
