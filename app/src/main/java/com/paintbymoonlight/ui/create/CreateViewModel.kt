@@ -78,15 +78,26 @@ class CreateViewModel(
                 }
                 picked is Picked.Museum -> title = picked.title
             }
-            preview = runCatching { withContext(Dispatchers.IO) { decode(sample, PREVIEW_SIDE) } }
+            val fail = if (picked is Picked.Photo) "This photo couldn't be opened." else "This picture couldn’t be fetched. Check your connection, then try again."
+            // Found (and, for a museum's, fetched) once: a failure shows after one try, not two.
+            val source = runCatching { withContext(Dispatchers.IO) { source(sample) } }
                 .onFailure { if (it is CancellationException) throw it }
-                .getOrNull()
-            photo = runCatching { withContext(Dispatchers.IO) { decode(sample) } }
+                .getOrElse { failed = fail; return@launch }
+            // Both decodes at once (a file, asset or content source decodes any number of times):
+            // the small one only shows if it beats the full one.
+            launch {
+                val small = runCatching { withContext(Dispatchers.IO) { decode(source, PREVIEW_SIDE) } }
+                    .onFailure { if (it is CancellationException) throw it }
+                    .getOrNull()
+                if (photo == null) preview = small
+            }
+            photo = runCatching { withContext(Dispatchers.IO) { decode(source) } }
                 .onFailure {
                     if (it is CancellationException) throw it
-                    failed = if (picked is Picked.Photo) "This photo couldn't be opened." else "This picture couldn’t be fetched. Check your connection, then try again."
+                    failed = fail
                 }
                 .getOrNull()
+            if (photo != null) preview = null
         }
     }
 
@@ -102,9 +113,8 @@ class CreateViewModel(
     }
 
     /** The picture upright (ImageDecoder applies its orientation), at most [maxSide] px on its long side: by default more than the pipeline's working size. */
-    private suspend fun decode(sample: Sample?, maxSide: Int = MAX_SIDE): Bitmap {
-        val source = source(sample)
-        return ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+    private fun decode(source: ImageDecoder.Source, maxSide: Int = MAX_SIDE): Bitmap =
+        ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
             val long = max(info.size.width, info.size.height)
             if (long > maxSide) {
                 val k = maxSide.toFloat() / long
@@ -113,7 +123,6 @@ class CreateViewModel(
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
             decoder.setTargetColorSpace(android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.SRGB))
         }.copy(Bitmap.Config.ARGB_8888, false)
-    }
 
     fun make(length: PaintingLength) {
         val bitmap = photo ?: return
