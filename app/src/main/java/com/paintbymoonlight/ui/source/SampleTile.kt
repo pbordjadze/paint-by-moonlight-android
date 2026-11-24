@@ -66,11 +66,14 @@ fun SampleTile(
     modifier: Modifier = Modifier,
     state: String? = null,
     badge: @Composable BoxScope.() -> Unit = {},
+    /** The picture, already read (the gallery's shelf reads its tiles before showing them); else read here. */
+    image: ImageBitmap? = null,
 ) {
     val context = LocalContext.current
-    val image by produceState<ImageBitmap?>(null, sample.id) {
-        value = Pictures.tile(context, sample)?.asImageBitmap()
+    val read by produceState(image, sample.id, image) {
+        if (value == null) value = Pictures.tile(context, sample)?.asImageBitmap()
     }
+    val picture = read
     val press = remember { MutableInteractionSource() }
     val pressed by press.collectIsPressedAsState()
     val corner by animateDpAsState(if (pressed) 26.dp else 18.dp, MaterialTheme.motionScheme.fastSpatialSpec(), label = "corner")
@@ -89,8 +92,8 @@ fun SampleTile(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.raised),
     ) {
         Box(Modifier.fillMaxWidth().aspectRatio(4f / 3f).background(MaterialTheme.colorScheme.surfaceContainerHigh)) {
-            val shown by animateFloatAsState(if (image != null) 1f else 0f, tween(200), label = "fade")
-            image?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().alpha(shown)) }
+            val shown by animateFloatAsState(if (picture != null) 1f else 0f, tween(200), label = "fade")
+            picture?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().alpha(shown)) }
             if (!below) {
                 // Dark by the caption's first line, so white words read over spray or sky.
                 Column(

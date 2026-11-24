@@ -18,8 +18,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -28,6 +31,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.paintbymoonlight.Unreleased
 import com.paintbymoonlight.data.Library
+import com.paintbymoonlight.pictures.Pictures
 import com.paintbymoonlight.pictures.Sample
 import com.paintbymoonlight.pictures.SampleLibrary
 import java.time.ZoneId
@@ -69,7 +73,15 @@ fun TonightShelf(library: Library, onPaint: (Sample) -> Unit, onMore: () -> Unit
                 else -> emptyList<Sample>() to false
             }
         }
-        if (shown.isEmpty()) return@BoxWithConstraints
+        // A tile shows once its picture is read, never as a blank card under a caption; the shelf
+        // waits for all of them, so its row doesn't fill in one by one.
+        val pictures by produceState<Map<String, ImageBitmap>?>(null, shown) {
+            value = null
+            value = shown.mapNotNull { sample -> Pictures.tile(context, sample)?.let { sample.id to it.asImageBitmap() } }.toMap()
+        }
+        val ready = pictures ?: return@BoxWithConstraints
+        val tiles = shown.filter { it.id in ready }
+        if (tiles.isEmpty()) return@BoxWithConstraints
         Column(Modifier.padding(top = 18.dp)) {
             Text(
                 if (earlier) "Earlier Nights" else "Tonight’s Picture",
@@ -78,13 +90,13 @@ fun TonightShelf(library: Library, onPaint: (Sample) -> Unit, onMore: () -> Unit
             )
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 for (i in 0 until columns) {
-                    val sample = shown.getOrNull(i)
+                    val sample = tiles.getOrNull(i)
                     if (sample == null) {
                         Spacer(Modifier.weight(1f))
                     } else {
-                        val isTonight = i == 0 && !earlier
+                        val isTonight = i == 0 && !earlier && sample == shown.first()
                         SampleTile(
-                            sample, onClick = { onPaint(sample) }, modifier = Modifier.weight(1f),
+                            sample, onClick = { onPaint(sample) }, modifier = Modifier.weight(1f), image = ready[sample.id],
                             state = if (isTonight) "Tonight’s Picture" else null,
                             badge = { if (isTonight) TonightMoon() },
                         )
