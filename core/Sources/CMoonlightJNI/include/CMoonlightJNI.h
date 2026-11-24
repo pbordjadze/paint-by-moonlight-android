@@ -12,3 +12,8 @@ int32_t mc_make(void *job, const uint8_t *rgba, int32_t width, int32_t height, i
                 uint8_t **template_bytes, int64_t *template_count, uint8_t **settings, int64_t *settings_count);
 int32_t mc_scene(const uint8_t *bytes, int64_t count, uint64_t nickname_seed, int32_t nickname_version, uint8_t **out,
                  int64_t *out_count);
+int32_t mc_shared_read(const uint8_t *bytes, int64_t count, uint8_t **template_bytes, int64_t *template_count,
+                       uint8_t **info, int64_t *info_count, uint8_t **photo, int64_t *photo_count);
+int32_t mc_shared_write(const uint8_t *template_bytes, int64_t template_count, const uint8_t *title, int64_t title_count,
+                        const uint8_t *settings, int64_t settings_count, const uint8_t *photo, int64_t photo_count,
+                        uint64_t nickname_seed, int32_t nickname_version, uint8_t **out, int64_t *out_count);

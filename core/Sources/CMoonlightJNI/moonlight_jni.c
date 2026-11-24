@@ -1,6 +1,7 @@
 // JNI entry points of com.paintbymoonlight.core.NativeCore (NativeCore.kt). Each copies its
 // Java arrays in, calls MoonlightCore's C ABI and copies the result out; a failure throws
-// com.paintbymoonlight.core.CoreException with the status (1 cancelled, 2 failed, 3 bad input).
+// com.paintbymoonlight.core.CoreException with the status (1 cancelled, 2 failed, 3 bad input,
+// 4 a file from a newer app).
 // Hosts without jni.h (the probe built on Linux) compile none of it.
 #if __has_include(<jni.h>)
 #include <jni.h>
@@ -96,6 +97,77 @@ JNIEXPORT jbyteArray JNICALL FN(scene)(JNIEnv *env, jclass cls, jbyteArray templ
     int32_t status = mc_scene((const uint8_t *)bytes, count, (uint64_t)nickname_seed, (int32_t)nickname_version, &out,
                               &out_count);
     (*env)->ReleaseByteArrayElements(env, template_bytes, bytes, JNI_ABORT);
+    if (status != 0) {
+        throw_status(env, status);
+        return NULL;
+    }
+    return to_java(env, out, out_count);
+}
+
+// Returns { template bytes, info JSON, photo bytes or null } of a .moonlight file someone sent.
+JNIEXPORT jobjectArray JNICALL FN(sharedRead)(JNIEnv *env, jclass cls, jbyteArray file) {
+    jsize count = (*env)->GetArrayLength(env, file);
+    jbyte *bytes = (*env)->GetByteArrayElements(env, file, NULL);
+    if (bytes == NULL) return NULL;
+    uint8_t *template_bytes = NULL, *info = NULL, *photo = NULL;
+    int64_t template_count = 0, info_count = 0, photo_count = 0;
+    int32_t status = mc_shared_read((const uint8_t *)bytes, count, &template_bytes, &template_count, &info, &info_count,
+                                    &photo, &photo_count);
+    (*env)->ReleaseByteArrayElements(env, file, bytes, JNI_ABORT);
+    if (status != 0) {
+        throw_status(env, status);
+        return NULL;
+    }
+    // As in make: after each step that can leave an exception pending, free what wasn't copied.
+    uint8_t *pending[3] = {template_bytes, info, photo};
+    int64_t counts[3] = {template_count, info_count, photo_count};
+    jclass byteArray = (*env)->FindClass(env, "[B");
+    jobjectArray result = byteArray != NULL ? (*env)->NewObjectArray(env, 3, byteArray, NULL) : NULL;
+    for (int i = 0; i < 3; i++) {
+        if (result == NULL || pending[i] == NULL) {
+            if (pending[i] != NULL) mc_free(pending[i]);
+            continue;
+        }
+        jbyteArray a = to_java(env, pending[i], counts[i]);
+        if (a != NULL) (*env)->SetObjectArrayElement(env, result, i, a);
+        if (a == NULL || (*env)->ExceptionCheck(env)) result = NULL;
+    }
+    return result;
+}
+
+// Borrows a Java array's bytes, or none for a null array.
+static jbyte *borrow(JNIEnv *env, jbyteArray array, jsize *count) {
+    *count = 0;
+    if (array == NULL) return NULL;
+    *count = (*env)->GetArrayLength(env, array);
+    return (*env)->GetByteArrayElements(env, array, NULL);
+}
+
+static void give_back(JNIEnv *env, jbyteArray array, jbyte *bytes) {
+    if (array != NULL && bytes != NULL) (*env)->ReleaseByteArrayElements(env, array, bytes, JNI_ABORT);
+}
+
+JNIEXPORT jbyteArray JNICALL FN(sharedWrite)(JNIEnv *env, jclass cls, jbyteArray template_bytes, jbyteArray title,
+                                             jbyteArray settings, jbyteArray photo, jlong nickname_seed,
+                                             jint nickname_version) {
+    jsize counts[4];
+    jbyteArray arrays[4] = {template_bytes, title, settings, photo};
+    jbyte *bytes[4] = {NULL, NULL, NULL, NULL};
+    int borrowed = 1;
+    for (int i = 0; i < 4; i++) {
+        bytes[i] = borrow(env, arrays[i], &counts[i]);
+        if (arrays[i] != NULL && bytes[i] == NULL) borrowed = 0;
+    }
+    uint8_t *out = NULL;
+    int64_t out_count = 0;
+    int32_t status = 3;
+    if (borrowed) {
+        status = mc_shared_write((const uint8_t *)bytes[0], counts[0], (const uint8_t *)bytes[1], counts[1],
+                                 (const uint8_t *)bytes[2], counts[2], (const uint8_t *)bytes[3], counts[3],
+                                 (uint64_t)nickname_seed, (int32_t)nickname_version, &out, &out_count);
+    }
+    for (int i = 0; i < 4; i++) give_back(env, arrays[i], bytes[i]);
+    if (!borrowed) return NULL; // OutOfMemoryError is pending
     if (status != 0) {
         throw_status(env, status);
         return NULL;

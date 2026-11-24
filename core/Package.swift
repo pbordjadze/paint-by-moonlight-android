@@ -21,11 +21,16 @@ let package = Package(
     targets: [
         .target(
             name: "MoonlightCore",
-            dependencies: [.product(name: "PaintCore", package: "paint-by-number"), "CxxHashMemory"],
+            dependencies: [.product(name: "PaintCore", package: "paint-by-number"), "CxxHashMemory", "CLZFSE"],
             swiftSettings: [.unsafeFlags(["-O"], .when(configuration: .debug))]
         ),
         // JNI entry points, in C: they copy Java arrays in and out and call MoonlightCore's C ABI.
         .target(name: "CMoonlightJNI"),
+        // LZFSE, the compression of a `.moonlight` file's template (Exchange.swift): Apple's
+        // reference implementation (BSD-3-Clause, its LICENSE beside it), the files of
+        // github.com/lzfse/lzfse's src/ at e634ca58b4821d9f3d560cdc6df5dec02ffc93fd, unchanged
+        // but for lzfse_main.c (its command line tool) left out.
+        .target(name: "CLZFSE", exclude: ["LICENSE"]),
         // A libc++ function the Android runtime needs and the NDK lacks (hash_memory.c).
         .target(name: "CxxHashMemory"),
         // Runs the same generation as the app on a photo from the command line, on a device or an
