@@ -3,7 +3,6 @@ package com.paintbymoonlight.core
 import android.graphics.Color
 import android.graphics.ColorSpace
 import android.graphics.Path
-import android.graphics.RectF
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.hypot
@@ -15,7 +14,17 @@ import kotlin.math.hypot
  * nickname ("Harbor Fog"; empty for a color the vocabulary doesn't name), [shade] its plain
  * color name ("Dark grayish green") and [hex] its code ("#3A5F4B").
  */
-class Paint(val color: Int, val p3: Long, val name: String, val shade: String, val hex: String) {
+class Paint(
+    val color: Int,
+    private val p3r: Float,
+    private val p3g: Float,
+    private val p3b: Float,
+    val name: String,
+    val shade: String,
+    val hex: String,
+) {
+    val p3: Long by lazy { Color.pack(p3r, p3g, p3b, 1f, ColorSpace.get(ColorSpace.Named.DISPLAY_P3)) }
+
     /** "12 · Harbor Fog", or "12 · Dark grayish green" without a nickname: the paint on screen. */
     fun numbered(index: Int) = "${index + 1} · ${name.ifEmpty { shade }}"
 
@@ -25,17 +34,28 @@ class Paint(val color: Int, val p3: Long, val name: String, val shade: String, v
 }
 
 /**
- * An area to paint. [path] is its outline in canvas units, holes included (even-odd);
- * [polygons] the same loops as flat x, y arrays, for hit testing.
+ * An area to paint: [polygons] its outline's loops in canvas units as flat x, y arrays, holes
+ * included (even-odd), for hit testing; [path] the same, to draw.
  */
 class Region(
     val paint: Int,
     val area: Float,
     val isDetail: Boolean,
-    val bounds: RectF,
-    val path: Path,
+    val bounds: Box,
     val polygons: List<FloatArray>,
 ) {
+    val path: Path by lazy {
+        Path().apply {
+            fillType = Path.FillType.EVEN_ODD
+            for (loop in polygons) {
+                if (loop.size < 6) continue
+                moveTo(loop[0], loop[1])
+                for (i in 1 until loop.size / 2) lineTo(loop[2 * i], loop[2 * i + 1])
+                close()
+            }
+        }
+    }
+
     /** Even-odd point-in-polygon over every loop. */
     fun contains(x: Float, y: Float): Boolean {
         if (!bounds.contains(x, y)) return false
@@ -114,6 +134,15 @@ internal fun segmentDistance(
     )
 }
 
+/** An area's bounding box, in canvas units. */
+class Box(val left: Float, val top: Float, val right: Float, val bottom: Float) {
+    fun width() = right - left
+    fun height() = bottom - top
+    fun centerX() = (left + right) / 2
+    fun centerY() = (top + bottom) / 2
+    fun contains(x: Float, y: Float) = x >= left && x < right && y >= top && y < bottom
+}
+
 /** A number on the canvas: where, how big (canvas units), whose, and the free circle it sits in. */
 class Label(val x: Float, val y: Float, val fontSize: Float, val region: Int, val radius: Float)
 
@@ -142,14 +171,25 @@ class Scene(
     val paints: List<Paint>,
     val regions: List<Region>,
     val edges: List<Edge>,
-    /** Every boundary once, as one path (pictures and print). */
-    val lines: Path,
     val labels: List<Label>,
-    /** Line art drawn inside areas, as one path. */
-    val strokes: Path,
-    /** The same lines as flat x, y arrays, for the canvas. */
+    /** Line art drawn inside areas, as flat x, y arrays. */
     val strokePoints: List<FloatArray>,
 ) {
+    /** Every boundary once, as one path (pictures and print). */
+    val lines: Path by lazy { Path().apply { edges.forEach { addPolyline(it.points) } } }
+
+    /** Line art drawn inside areas, as one path. */
+    val strokes: Path by lazy { Path().apply { strokePoints.forEach { addPolyline(it) } } }
+
+    /** The paths, made now (a reader's thread) rather than at the first frame. */
+    fun prepare(): Scene {
+        regions.forEach { it.path }
+        lines
+        strokes
+        paints.forEach { it.p3 }
+        return this
+    }
+
     /** Each area's largest number, by area: where its paint and its sparkles start. */
     val labelOf: IntArray by lazy {
         val best = IntArray(regions.size) { -1 }
@@ -192,77 +232,84 @@ class Scene(
     companion object {
         const val VERSION = 2
 
-        fun read(bytes: ByteArray): Scene {
+        /** Reads a scene and makes its paths; throws [IllegalArgumentException] on damaged bytes. */
+        fun read(bytes: ByteArray): Scene = parse(bytes).prepare()
+
+        /**
+         * Reads a scene without making its paths. Every count is checked against the bytes left
+         * before anything is allocated, and every index (a region's paint, a label's region, an
+         * edge's sides) against what it names, so damaged bytes throw and never index wildly.
+         */
+        fun parse(bytes: ByteArray): Scene {
             val b = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
-            val magic = ByteArray(4).also { b.get(it) }.decodeToString()
-            require(magic == "MLSC") { "not a scene" }
-            require(b.int == VERSION) { "scene version" }
-            val width = b.float
-            val height = b.float
-            val book = b.int and 1 != 0
+            try {
+                require(b.remaining() >= 20) { "not a scene" }
+                val magic = ByteArray(4).also { b.get(it) }.decodeToString()
+                require(magic == "MLSC") { "not a scene" }
+                require(b.int == VERSION) { "scene version" }
+                val width = b.float
+                val height = b.float
+                require(width.isFinite() && height.isFinite() && width > 0 && height > 0) { "corrupt scene" }
+                val book = b.int and 1 != 0
 
-            val paints = List(b.count()) {
-                val r = b.float; val g = b.float; val bl = b.float
-                val p3 = Color.pack(b.float.unit(), b.float.unit(), b.float.unit(), 1f, ColorSpace.get(ColorSpace.Named.DISPLAY_P3))
-                Paint(rgb(r, g, bl), p3, name = b.string(), shade = b.string(), hex = b.string())
-            }
-
-            val regions = List(b.count()) {
-                val paint = b.int
-                val area = b.float
-                val flags = b.int
-                val bounds = RectF(b.float, b.float, b.float + 1, b.float + 1)
-                val path = Path().apply { fillType = Path.FillType.EVEN_ODD }
-                val polygons = List(b.count()) {
-                    val loop = b.points()
-                    if (loop.size >= 6) {
-                        path.moveTo(loop[0], loop[1])
-                        for (i in 1 until loop.size / 2) path.lineTo(loop[2 * i], loop[2 * i + 1])
-                        path.close()
-                    }
-                    loop
+                val paints = List(b.count(PAINT_BYTES)) {
+                    val r = b.float; val g = b.float; val bl = b.float
+                    val p3r = b.float.unit(); val p3g = b.float.unit(); val p3b = b.float.unit()
+                    Paint(rgb(r, g, bl), p3r, p3g, p3b, name = b.string(), shade = b.string(), hex = b.string())
                 }
-                Region(paint, area, flags and 1 != 0, bounds, path, polygons)
+
+                val regions = List(b.count(REGION_BYTES)) {
+                    val paint = b.int
+                    require(paint in paints.indices) { "corrupt scene" }
+                    val area = b.float
+                    val flags = b.int
+                    val bounds = Box(b.float, b.float, b.float + 1, b.float + 1)
+                    val polygons = List(b.count(4)) { b.points() }
+                    Region(paint, area, flags and 1 != 0, bounds, polygons)
+                }
+
+                val edges = List(b.count(EDGE_BYTES)) {
+                    val left = b.int
+                    val right = b.int
+                    require(left in regions.indices && (right in regions.indices || right == Edge.OUTSIDE)) { "corrupt scene" }
+                    Edge(left, right, b.int != 0, b.points())
+                }
+
+                val labels = List(b.count(LABEL_BYTES)) {
+                    val x = b.float; val y = b.float; val size = b.float
+                    val region = b.int
+                    require(region in regions.indices) { "corrupt scene" }
+                    Label(x, y, size, region, b.float)
+                }
+
+                val strokePoints = List(b.count(4)) { b.points() }
+
+                return Scene(width, height, book, paints, regions, edges, labels, strokePoints)
+            } catch (_: java.nio.BufferUnderflowException) {
+                throw IllegalArgumentException("corrupt scene")
             }
-
-            val lines = Path()
-            val edges = List(b.count()) {
-                val left = b.int
-                val right = b.int
-                val drawn = b.int != 0
-                val points = b.points()
-                lines.addPolyline(points)
-                Edge(left, right, drawn, points)
-            }
-
-            val labels = List(b.count()) { Label(b.float, b.float, b.float, b.int, b.float) }
-
-            val strokes = Path()
-            val strokePoints = List(b.count()) { b.points().also { strokes.addPolyline(it) } }
-
-            return Scene(width, height, book, paints, regions, edges, lines, labels, strokes, strokePoints)
         }
 
-        private fun ByteBuffer.string(): String = ByteArray(count()).also { get(it) }.decodeToString()
+        // The least each record takes: its fixed fields and the counts that follow them.
+        private const val PAINT_BYTES = 6 * 4 + 3 * 4
+        private const val REGION_BYTES = 4 + 4 + 4 + 16 + 4
+        private const val EDGE_BYTES = 4 + 4 + 4 + 4
+        private const val LABEL_BYTES = 5 * 4
+
+        private fun ByteBuffer.string(): String = ByteArray(count(1)).also { get(it) }.decodeToString()
 
         private fun Float.unit() = coerceIn(0f, 1f)
 
-        private fun ByteBuffer.count(): Int {
+        /** A count of records of at least [bytes] each, which the bytes left must hold. */
+        private fun ByteBuffer.count(bytes: Int): Int {
             val n = int
-            require(n in 0..remaining()) { "corrupt scene" }
+            require(n >= 0 && n.toLong() * bytes <= remaining()) { "corrupt scene" }
             return n
         }
 
         private fun ByteBuffer.points(): FloatArray {
-            val n = count()
-            require(n.toLong() * 8 <= remaining()) { "corrupt scene" }
+            val n = count(8)
             return FloatArray(n * 2) { float }
-        }
-
-        private fun Path.addPolyline(p: FloatArray) {
-            if (p.size < 4) return
-            moveTo(p[0], p[1])
-            for (i in 1 until p.size / 2) lineTo(p[2 * i], p[2 * i + 1])
         }
 
         private fun rgb(r: Float, g: Float, b: Float): Int {
@@ -270,4 +317,10 @@ class Scene(
             return (0xFF shl 24) or (c(r) shl 16) or (c(g) shl 8) or c(b)
         }
     }
+}
+
+private fun Path.addPolyline(p: FloatArray) {
+    if (p.size < 4) return
+    moveTo(p[0], p[1])
+    for (i in 1 until p.size / 2) lineTo(p[2 * i], p[2 * i + 1])
 }
