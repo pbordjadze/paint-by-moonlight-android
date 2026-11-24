@@ -35,6 +35,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     buildFeatures { compose = true }
+    // The line models are memory-mapped from the APK, which needs them stored uncompressed.
+    androidResources { noCompress += "tflite" }
     packaging {
         // The Swift runtime's libraries are loaded straight from the APK (uncompressed and
         // page-aligned), as Play expects of native code.
@@ -62,6 +64,18 @@ dependencies {
     implementation(libs.play.billing)
     implementation(libs.glance.appwidget)
     implementation(libs.glance.material3)
+    // The line models run on LiteRT's interpreter (core/EdgeModels.kt), which needs none of what
+    // LiteRT's model delivery brings along.
+    implementation(libs.litert) {
+        exclude(group = "com.google.guava")
+        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-guava")
+        exclude(group = "com.google.android.play", module = "ai-delivery")
+    }
+    // On-device ML Kit through Google Play services (core/PhotoFinder.kt): its models download
+    // once with Play services, not in the APK.
+    implementation(libs.mlkit.faces)
+    implementation(libs.mlkit.subjects)
+    implementation(libs.mlkit.text)
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)
 
