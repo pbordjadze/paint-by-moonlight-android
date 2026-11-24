@@ -9,6 +9,16 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
@@ -42,9 +52,11 @@ import androidx.compose.ui.unit.sp
 import com.paintbymoonlight.ui.theme.NumeralFamily
 
 /**
- * The palette: a swatch per paint left, its number on it. The paint in hand is a scalloped
- * cookie rather than a circle and stands a little larger; a swatch shakes when the painter
- * taps an area of its paint with another in hand ([shake] changes). A finished paint leaves.
+ * The palette: a line naming the paint in hand ("1 · Salmon · 4 left") over a swatch per paint
+ * left, its number on it and a thin arc round its edge for how much of it is done. The paint
+ * in hand is a scalloped cookie rather than a circle and stands a little larger; a swatch
+ * shakes when the painter taps an area of its paint with another in hand ([shake] changes). A
+ * finished paint leaves.
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -69,66 +81,109 @@ fun PaletteBar(
     }
     val cookie = MaterialShapes.Cookie9Sided.toShape()
     val circle = MaterialShapes.Circle.toShape()
-    LazyRow(
-        modifier = modifier,
-        state = listState,
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        itemsIndexed(left, key = { _, paint -> paint }) { _, paint ->
-            val color = Color(scene.paints[paint].color)
-            val held = paint == session.selected
-            val grow by animateFloatAsState(if (held) 1.12f else 1f, MaterialTheme.motionScheme.fastSpatialSpec())
-            val shakeX = remember { Animatable(0f) }
-            LaunchedEffect(shake) {
-                if (shake?.first == paint) {
-                    for (x in listOf(10f, -9f, 7f, -5f, 3f, 0f)) shakeX.animateTo(x, spring(stiffness = 2500f))
+    Column(modifier) {
+        InHand(session, Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp))
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            state = listState,
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            itemsIndexed(left, key = { _, paint -> paint }) { _, paint ->
+                val color = Color(scene.paints[paint].color)
+                val held = paint == session.selected
+                val grow by animateFloatAsState(if (held) 1.12f else 1f, MaterialTheme.motionScheme.fastSpatialSpec())
+                val shakeX = remember { Animatable(0f) }
+                LaunchedEffect(shake) {
+                    if (shake?.first == paint) {
+                        for (x in listOf(10f, -9f, 7f, -5f, 3f, 0f)) shakeX.animateTo(x, spring(stiffness = 2500f))
+                    }
                 }
-            }
-            val ink = if (color.luminance() > 0.45f) Color(0xFF231E26) else Color.White
-            val name = scene.paints[paint].name
-            Box(
-                Modifier
-                    .animateItem()
-                    .graphicsLayer { translationX = shakeX.value }
-                    .scale(grow)
-                    .size(52.dp)
-                    .clip(if (held) cookie else circle)
-                    .background(color)
-                    .then(
-                        if (held) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, cookie)
-                        else Modifier.border(1.dp, Color.Black.copy(alpha = 0.12f), circle)
-                    )
-                    .clickable { onSelect(paint) }
-                    .semantics {
-                        role = Role.Button
-                        selected = held
-                        contentDescription = "Paint ${paint + 1}${if (name.isNotEmpty()) ", $name" else ""}"
-                        stateDescription = "${session.remaining(paint)} of ${session.total(paint)} areas left"
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "${paint + 1}",
-                    color = ink,
-                    fontFamily = NumeralFamily,
-                    fontWeight = if (held) FontWeight.Bold else FontWeight.Medium,
-                    fontSize = if (paint + 1 >= 100) 15.sp else 19.sp,
-                )
-                // How much of this paint is done, as a thin arc along the swatch's foot.
-                val done = 1f - session.remaining(paint) / session.total(paint).coerceAtLeast(1).toFloat()
-                if (done > 0f) {
-                    Box(
-                        Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 7.dp)
-                            .size(width = (26 * done).dp, height = 3.dp)
-                            .clip(circle)
-                            .background(ink.copy(alpha = 0.7f))
+                val ink = inkOn(color)
+                val name = scene.paints[paint].name
+                Box(
+                    Modifier
+                        .animateItem()
+                        .graphicsLayer { translationX = shakeX.value }
+                        .scale(grow)
+                        .size(52.dp)
+                        .clip(if (held) cookie else circle)
+                        .background(color)
+                        .then(
+                            if (held) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, cookie)
+                            else Modifier.border(1.dp, Color.Black.copy(alpha = 0.12f), circle)
+                        )
+                        .drawWithContent {
+                            drawContent()
+                            // How much of this paint is done, as a thin arc inside the swatch's edge.
+                            val done = 1f - session.remaining(paint) / session.total(paint).coerceAtLeast(1).toFloat()
+                            if (done > 0f) {
+                                val stroke = 2.5.dp.toPx()
+                                val inset = 7.dp.toPx()
+                                drawArc(
+                                    color = ink.copy(alpha = 0.7f),
+                                    startAngle = -90f,
+                                    sweepAngle = 360f * done,
+                                    useCenter = false,
+                                    topLeft = Offset(inset, inset),
+                                    size = Size(size.width - 2 * inset, size.height - 2 * inset),
+                                    style = Stroke(width = stroke, cap = StrokeCap.Round),
+                                )
+                            }
+                        }
+                        .clickable { onSelect(paint) }
+                        .semantics {
+                            role = Role.Button
+                            selected = held
+                            contentDescription = "Paint ${paint + 1}${if (name.isNotEmpty()) ", $name" else ""}"
+                            stateDescription = "${session.remaining(paint)} of ${session.total(paint)} areas left"
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "${paint + 1}",
+                        color = ink,
+                        fontFamily = NumeralFamily,
+                        fontWeight = if (held) FontWeight.Bold else FontWeight.Medium,
+                        fontSize = if (paint + 1 >= 100) 15.sp else 19.sp,
                     )
                 }
             }
         }
     }
+}
+
+/** The paint in hand, named, and how many of its areas are left. */
+@Composable
+private fun InHand(session: PaintSession, modifier: Modifier = Modifier) {
+    session.changes
+    val paint = session.selected
+    if (paint !in session.scene.paints.indices) return
+    val name = session.scene.paints[paint].name
+    val left = session.remaining(paint)
+    val numeral = MaterialTheme.typography.titleMedium.toSpanStyle().copy(fontFamily = NumeralFamily, fontWeight = FontWeight.SemiBold)
+    Text(
+        buildAnnotatedString {
+            withStyle(numeral) { append("${paint + 1}") }
+            if (name.isNotEmpty()) append("  ·  $name")
+            append("  ·  ")
+            append(if (left == 1) "1 left" else "$left left")
+        },
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier,
+    )
+}
+
+private val darkInk = Color(0xFF231E26)
+
+/** The numeral's ink on a swatch: dark or white, whichever contrasts more (WCAG's ratio). */
+private fun inkOn(color: Color): Color {
+    val l = color.luminance()
+    val againstDark = (l + 0.05f) / (darkInk.luminance() + 0.05f)
+    val againstWhite = 1.05f / (l + 0.05f)
+    return if (againstDark >= againstWhite) darkInk else Color.White
 }

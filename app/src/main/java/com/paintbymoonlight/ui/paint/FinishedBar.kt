@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -41,7 +42,7 @@ fun FinishedBar(celebrate: Boolean, onShare: () -> Unit, onPrint: (() -> Unit)?,
     val spring = MaterialTheme.motionScheme.fastSpatialSpec<Float>()
     LaunchedEffect(celebrate) { if (celebrate) pop.animateTo(1f, spring) }
     Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 2.dp, modifier = modifier) {
-        Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
+        Column(Modifier.navigationBarsPadding().padding(horizontal = 20.dp, vertical = 16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     Icons.Rounded.AutoAwesome, contentDescription = null, tint = Moonlight.gold,
