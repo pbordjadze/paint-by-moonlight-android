@@ -230,7 +230,7 @@ fun PaintCanvas(
     }
 
     // Before the first layout, which places the camera within these.
-    remember(scene, density) { camera.setPainting(scene.width, scene.height, 16 * density, scene.smallLabelSize) }
+    remember(scene, density) { camera.setPainting(scene.width, scene.height, 16 * density, scene.smallLabelSize); scene }
 
     // Frames tick only while something moves.
     LaunchedEffect(motion.wake) {

@@ -3,6 +3,8 @@
 
     <!-- One Big Sheet: prices, the sheet and the order go to the print relay. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The painting's touch (ui/paint/Haptics.kt): no prompt, a normal permission. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
         android:name=".MoonlightApp"

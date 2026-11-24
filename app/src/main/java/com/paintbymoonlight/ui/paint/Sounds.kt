@@ -141,7 +141,8 @@ class Sounds(context: Context) {
     private fun play(name: String, volume: Float, delayMs: Long = 0) {
         if (released || audio?.ringerMode != AudioManager.RINGER_MODE_NORMAL) return
         val id = ids[name]?.takeIf { it in loaded } ?: return
-        val v = volume.coerceIn(0f, 1f)
+        // iOS's mixer plays everything at 0.8.
+        val v = (volume * 0.8f).coerceIn(0f, 1f)
         if (delayMs <= 0) pool.play(id, v, v, 1, 0, 1f) else main.postDelayed({ pool.play(id, v, v, 1, 0, 1f) }, delayMs)
     }
 

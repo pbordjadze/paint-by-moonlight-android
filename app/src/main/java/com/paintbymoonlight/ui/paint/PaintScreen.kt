@@ -274,17 +274,19 @@ private fun Painting(
 
     /**
      * What the painter feels and hears of fills just made, a tap's one or a drag's several at
-     * once: the biggest's tap, a finished color's rising three, the painting's celebration.
+     * once: their press and note, a finished color's rising three, the painting's celebration.
      */
     fun painted(fills: List<Tap.Painted>) {
         if (fills.isEmpty()) return
         model.changed()
-        val size = fills.maxOf { min(1f, kotlin.math.sqrt(scene.regions[it.region].area / (scene.width * scene.height)) * 6) }
+        // What they painted together, as a size to feel (iOS's: the square root of its share, ×6).
+        val area = fills.sumOf { scene.regions[it.region].area.toDouble() }.toFloat()
+        val size = min(1f, kotlin.math.sqrt(area / (scene.width * scene.height)) * 6)
         sounds.paint(size)
         when {
             fills.any { it.finishedPainting } -> {
                 // The painting's celebration is the one finale: its last paint has none of its own.
-                haptics.celebrate()
+                haptics.celebrate(size)
                 sounds.celebrate()
                 finishedHere = true
                 finishedAt = System.currentTimeMillis()
