@@ -213,7 +213,7 @@ private suspend fun sharePainting(context: Context, library: Library, id: String
         withContext(Dispatchers.Default) {
             val scene = Core.scene(library.template(id), meta.seed, meta.nicknameVersion)
             val progress = library.progress(id, scene.regions.size)
-            val bitmap = if (progress.isComplete) Thumbnails.finished(scene) else Thumbnails.render(scene, progress, 2048)
+            val bitmap = if (progress.isComplete) Thumbnails.finished(scene) else Thumbnails.render(scene, progress, 2048, numbers = false)
             val dir = File(context.cacheDir, "shared").apply { deleteRecursively(); mkdirs() }
             File(dir, "${meta.title.replace(Regex("[^\\p{L}\\p{N} ._-]"), "").ifBlank { "Painting" }}.png").also { out ->
                 out.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }

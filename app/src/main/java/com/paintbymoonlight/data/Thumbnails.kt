@@ -13,7 +13,11 @@ import kotlin.math.max
  * template reads as a page to paint rather than a faint sketch.
  */
 object Thumbnails {
-    fun render(scene: Scene, progress: Progress, longSide: Int = 640): Bitmap {
+    /**
+     * [numbers] off for a picture of the painting as it stands that leaves the app (Share), as
+     * iOS shares one: its numbers are for painting, not for showing.
+     */
+    fun render(scene: Scene, progress: Progress, longSide: Int = 640, numbers: Boolean = true): Bitmap {
         val k = longSide / max(scene.width, scene.height)
         val bitmap = Bitmap.createBitmap(
             (scene.width * k).toInt().coerceAtLeast(1), (scene.height * k).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
@@ -40,9 +44,9 @@ object Thumbnails {
             textAlign = Paint.Align.CENTER
             typeface = Typeface.create(Typeface.SERIF, Typeface.NORMAL)
         }
-        for (label in scene.labels) {
+        if (numbers) for (label in scene.labels) {
             val region = scene.regions.getOrNull(label.region) ?: continue
-            // A number too small to make out at this size would only be a speck.
+            // A number too small to read at this size would only be a speck.
             if (progress.isPainted(label.region) || label.fontSize * k < MIN_NUMBER_PX) continue
             number.textSize = label.fontSize
             canvas.drawText("${region.paint + 1}", label.x, label.y + label.fontSize * 0.36f, number)
@@ -53,7 +57,7 @@ object Thumbnails {
     /** The lines: the canvas's ink at about 60%. */
     private const val INK = 0x99201C24.toInt()
     private const val NUMBER = 0xFF6A6670.toInt()
-    private const val MIN_NUMBER_PX = 4.5f
+    private const val MIN_NUMBER_PX = 8f
 
     /** The finished painting, no lines: what a painter shares. */
     fun finished(scene: Scene, longSide: Int = 2048): Bitmap {
