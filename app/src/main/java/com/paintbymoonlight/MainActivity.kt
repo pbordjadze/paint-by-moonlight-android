@@ -42,11 +42,14 @@ import com.paintbymoonlight.ui.LocalDestinationTransition
 import com.paintbymoonlight.ui.LocalSharedTransition
 import com.paintbymoonlight.ui.create.CreateScreen
 import com.paintbymoonlight.ui.create.CreateViewModel
+import com.paintbymoonlight.ui.create.Picked
 import com.paintbymoonlight.ui.exchange.ReceivePainting
 import com.paintbymoonlight.ui.exchange.openedFile
 import com.paintbymoonlight.ui.gallery.GalleryScreen
 import com.paintbymoonlight.ui.paint.PaintScreen
 import com.paintbymoonlight.ui.paint.PaintViewModel
+import com.paintbymoonlight.ui.source.PaintPage
+import com.paintbymoonlight.ui.source.TonightShelf
 import com.paintbymoonlight.ui.theme.MoonlightTheme
 import com.paintbymoonlight.unlock.rememberUnlockGate
 import kotlinx.coroutines.CancellationException
@@ -78,6 +81,7 @@ private object Routes {
     const val NEW = "new"
     const val PRINT = "print/{id}"
     const val PAGES = "pages/{id}"
+    const val SOURCE = "source"
     fun paint(id: String) = "paint/$id"
     fun print(id: String) = "print/$id"
     fun pages(id: String) = "pages/$id"
@@ -90,14 +94,16 @@ private fun MoonlightNav(app: MoonlightApp, opened: Uri?) {
     val scope = rememberCoroutineScope()
     val library = app.library
 
-    // The photo is held here, never in the route: every route is also a deep link any app can
+    // The picture is held here, never in the route: every route is also a deep link any app can
     // send, and a photo in one would be read with this app's permissions.
-    var picked by rememberSaveable { mutableStateOf<Uri?>(null) }
+    var picked by rememberSaveable(stateSaver = Picked.Saver) { mutableStateOf<Picked?>(null) }
+    val create = { picture: Picked ->
+        picked = picture
+        // A double tap opens one create screen.
+        nav.navigate(Routes.CREATE) { launchSingleTop = true }
+    }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) {
-            picked = uri
-            nav.navigate(Routes.CREATE)
-        }
+        if (uri != null) create(Picked.Photo(uri.toString()))
     }
     // A new painting takes a free painting: with none left, the gate offers Unlimited Paintings first.
     val gate = rememberUnlockGate(app.paintings)
@@ -113,14 +119,30 @@ private fun MoonlightNav(app: MoonlightApp, opened: Uri?) {
                     CompositionLocalProvider(LocalDestinationTransition provides this) {
                         GalleryScreen(
                             library = library,
-                            onNew = { gate.start { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) } },
+                            onNew = { gate.start { nav.navigate(Routes.SOURCE) { launchSingleTop = true } } },
                             onOpen = { nav.navigate(Routes.paint(it)) },
                             onShare = share,
                             onPrintPages = { id -> nav.navigate(Routes.pages(id)) },
                             onRename = { id, title -> scope.launch { library.rename(id, title) } },
                             onDelete = { id -> scope.launch { library.delete(id) } },
+                            shelf = {
+                                TonightShelf(
+                                    library,
+                                    onPaint = { sample -> gate.start { create(Picked.Sample(sample.id)) } },
+                                    onMore = { gate.start { nav.navigate(Routes.SOURCE) { launchSingleTop = true } } },
+                                )
+                            },
                         )
                     }
+                }
+                // New Painting's Paint page: Tonight's Picture, the painter's own photos, the library (and the Museum).
+                composable(Routes.SOURCE) {
+                    PaintPage(
+                        library = library,
+                        onPicked = create,
+                        onResume = { id -> nav.navigate(Routes.paint(id)) { popUpTo(Routes.GALLERY) } },
+                        onClose = { nav.popBackStack() },
+                    )
                 }
                 composable(Routes.CREATE) {
                     val photo = picked
@@ -128,7 +150,7 @@ private fun MoonlightNav(app: MoonlightApp, opened: Uri?) {
                         LaunchedEffect(Unit) { nav.popBackStack() }
                         return@composable
                     }
-                    val model = viewModel { CreateViewModel(library, app.contentResolver, photo, app.paintings) }
+                    val model = viewModel { CreateViewModel(library, app, photo, app.paintings) }
                     CreateScreen(
                         model = model,
                         preferences = app.preferences,

@@ -11,7 +11,11 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasScrollToNodeAction
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
@@ -29,8 +33,13 @@ import com.paintbymoonlight.data.Library
 import com.paintbymoonlight.data.PaintingMeta
 import com.paintbymoonlight.data.Progress
 import com.paintbymoonlight.data.Thumbnails
+import com.paintbymoonlight.museum.MuseumCatalog
+import com.paintbymoonlight.museum.MuseumImages
+import com.paintbymoonlight.museum.MuseumLibrary
+import com.paintbymoonlight.pictures.Pictures
 import com.paintbymoonlight.ui.create.CreateScreen
 import com.paintbymoonlight.ui.create.CreateViewModel
+import com.paintbymoonlight.ui.create.Picked
 import com.paintbymoonlight.ui.theme.MoonlightTheme
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
@@ -48,8 +57,8 @@ import kotlin.math.abs
  * launch), opens the create screen on a test photo and starts making it, then the core makes
  * two paintings from the test photos (Kodak's parrots and lighthouse), one left a third
  * painted and one finished, and the tour goes through the gallery, a card's menu, the
- * painting screen with Hint and More, the finished painting, Print it big, dark mode and a
- * 1.3× font. Screenshots land in the app's files/shots/ as NN-name.png (sorted in tour
+ * painting screen with Hint and More, the finished painting, Print it big, dark mode, a
+ * 1.3× font, the Paint page, Tonight's Picture picked and the Museum. Screenshots land in the app's files/shots/ as NN-name.png (sorted in tour
  * order), which CI pulls with `run-as` (scripts/emulator-tour.sh).
  */
 @RunWith(AndroidJUnit4::class)
@@ -150,7 +159,7 @@ class AppTour {
     fun b_create() {
         val photo = File(app.cacheDir, "tour-photo.jpg")
         instrumentation.context.assets.open("parrots.jpg").use { input -> photo.outputStream().use { input.copyTo(it) } }
-        val model = CreateViewModel(app.library, app.contentResolver, Uri.fromFile(photo), app.paintings)
+        val model = CreateViewModel(app.library, app, Picked.Photo(Uri.fromFile(photo).toString()), app.paintings)
         compose.runOnUiThread {
             compose.activity.setContent {
                 MoonlightTheme { CreateScreen(model = model, preferences = app.preferences, onBack = {}, onMade = {}) }
@@ -238,6 +247,82 @@ class AppTour {
             shell("settings put system font_scale 1.0")
             waitForConfiguration(lenient = true) { abs(it.fontScale - 1f) < 0.01f }
         }
+    }
+
+    @Test
+    fun h_paintPage() {
+        ensurePaintings()
+        waitFor(hasText("New painting"), 10_000)
+        compose.onNode(hasText("New painting")).performClick()
+        waitFor(hasText("Your Own"))
+        shoot("14-paint-page")
+        compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText("Picture credits"))
+        shoot("15-paint-page-more")
+        compose.onNode(hasText("Picture credits")).performClick()
+        waitFor(hasText("CC0", substring = true))
+        shoot("16-picture-credits")
+    }
+
+    /** Tonight's Picture picked: the create screen on it, its title and painter under it. */
+    @Test
+    fun i_tonightsPicture() {
+        val tonight = Pictures.tonight(app) ?: error("no Tonight's Picture")
+        waitFor(hasText("New painting"), 10_000)
+        compose.onNode(hasText("New painting")).performClick()
+        waitFor(hasContentDescription(tonight.label))
+        compose.onAllNodes(hasContentDescription(tonight.label)).onFirst().performClick()
+        waitFor(hasContentDescription(tonight.title))
+        shoot("17-create-tonight")
+    }
+
+    /**
+     * The Museum. Its catalog and pictures come from the network; where the device has none, the
+     * tour hangs its own two test photos as works (named as such), laid in the picture cache as
+     * if fetched, so the wall, a work's page and Paint This still show.
+     */
+    @Test
+    fun j_museum() {
+        val museum = MuseumLibrary.of(app)
+        museum.open()
+        try {
+            compose.waitUntil(45_000) { museum.state.value !is MuseumLibrary.State.Loading }
+        } catch (e: ComposeTimeoutException) {
+            Log.i("AppTour", "the museum's catalog didn't come: ${e.message}")
+        }
+        if (museum.state.value !is MuseumLibrary.State.Ready) museum.use(tourCatalog())
+        waitFor(hasText("New painting"), 10_000)
+        compose.onNode(hasText("New painting")).performClick()
+        waitFor(hasContentDescription("Museum", substring = true))
+        compose.onNode(hasContentDescription("Museum", substring = true)).performClick()
+        waitFor(hasText("Artists, titles, years"))
+        Thread.sleep(4_000)
+        shoot("18-museum")
+        compose.onAllNodes(hasContentDescription(", ", substring = true) and hasClickAction()).onFirst().performClick()
+        waitFor(hasText("Paint This"))
+        Thread.sleep(3_000)
+        shoot("19-museum-work")
+        compose.onNode(hasText("Paint This")).performClick()
+        waitFor(hasText("Start painting"), 60_000)
+        shoot("20-museum-create")
+    }
+
+    private fun tourCatalog(): MuseumCatalog {
+        val images = MuseumImages.of(app)
+        val photos = listOf("parrots.jpg", "lighthouse.jpg")
+        for (photo in photos) images.seed("https://tour.invalid/$photo", instrumentation.context.assets.open(photo).use { it.readBytes() })
+        val works = (1..12).joinToString(",") { i ->
+            val photo = photos[i % 2]
+            val (w, h) = if (photo == "parrots.jpg") 768 to 512 else 512 to 768
+            """{"id": "tour-$i", "title": "Tour photo $i", "artist": "Kodak test photo", "year": "1991", "date": ${1990 + i},
+              "movement": "${if (i % 3 == 0) "Realism" else "Impressionism"}", "kind": "${if (i % 4 == 0) "print" else "painting"}",
+              "colorfulness": ${20 + i * 3}, "average": "8a7a6a", "width": $w, "height": $h, "museum": "tour",
+              "thumb": "https://tour.invalid/$photo", "image": "https://tour.invalid/$photo", "medium": "Photograph"}"""
+        }
+        return MuseumCatalog.decode(
+            """{"version": 1, "made": "2026-11-24", "museums": {"tour": "The tour's own photos"},
+              "movements": ["Impressionism", "Realism"], "works": [$works]}""",
+            hosts = setOf("tour.invalid"),
+        )
     }
 
     /**
