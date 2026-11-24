@@ -21,11 +21,13 @@ let package = Package(
     targets: [
         .target(
             name: "MoonlightCore",
-            dependencies: [.product(name: "PaintCore", package: "paint-by-number")],
+            dependencies: [.product(name: "PaintCore", package: "paint-by-number"), "CxxHashMemory"],
             swiftSettings: [.unsafeFlags(["-O"], .when(configuration: .debug))]
         ),
         // JNI entry points, in C: they copy Java arrays in and out and call MoonlightCore's C ABI.
         .target(name: "CMoonlightJNI"),
+        // A libc++ function the Android runtime needs and the NDK lacks (hash_memory.c).
+        .target(name: "CxxHashMemory"),
         // Runs the same generation as the app on a photo from the command line, on a device or an
         // emulator (adb shell), and prints the template's hash: the proof that Android makes the
         // same template as Linux and iOS.

@@ -137,8 +137,8 @@ jobs:
           set -euo pipefail
           [ -d out ] || exit 0
           cp host-probe.txt out/ 2>/dev/null || true
+          git init -q --bare "$RUNNER_TEMP/shots.git"
           export GIT_DIR="$RUNNER_TEMP/shots.git" GIT_WORK_TREE="$PWD/out"
-          git init -q --bare "$GIT_DIR"
           git add -A
           git -c user.name=ci -c user.email=ci@localhost commit -qm "Android CI shots for ${GITHUB_SHA} (run ${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT})"
           git push -qf "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/ci-shots/${GITHUB_REF_NAME}"
