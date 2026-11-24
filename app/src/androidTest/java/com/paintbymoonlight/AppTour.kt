@@ -150,7 +150,7 @@ class AppTour {
     fun b_create() {
         val photo = File(app.cacheDir, "tour-photo.jpg")
         instrumentation.context.assets.open("parrots.jpg").use { input -> photo.outputStream().use { input.copyTo(it) } }
-        val model = CreateViewModel(app.library, app.contentResolver, Uri.fromFile(photo))
+        val model = CreateViewModel(app.library, app.contentResolver, Uri.fromFile(photo), app.paintings)
         compose.runOnUiThread {
             compose.activity.setContent {
                 MoonlightTheme { CreateScreen(model = model, preferences = app.preferences, onBack = {}, onMade = {}) }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs on a booted emulator or device (adb): first the core's probe (build/core/<abi>/, from
-# scripts/build-core.sh) on a photo, twice, then the app's tour (AppTour), and pulls its
+# scripts/build-core.sh) on a photo, twice, then the app's tours (AppTour, UnlockTour), and pulls their
 # screenshots and log into the output directory. The two runs must make the same bytes, and the
 # painting must be the host's (settings, areas, paints, sizes, valid). Its bytes may differ from
 # the host's: Bionic's libm rounds some functions differently from glibc's (as Darwin's does),
@@ -34,7 +34,7 @@ fi
 "$ROOT/gradlew" -p "$ROOT" --console=plain installDebug installDebugAndroidTest
 adb logcat -c
 set +e
-adb shell am instrument -w -e class com.paintbymoonlight.AppTour "$PKG.test/androidx.test.runner.AndroidJUnitRunner" | tee "$OUT/instrument.txt"
+adb shell am instrument -w -e class com.paintbymoonlight.AppTour,com.paintbymoonlight.UnlockTour "$PKG.test/androidx.test.runner.AndroidJUnitRunner" | tee "$OUT/instrument.txt"
 set -e
 adb logcat -d > "$OUT/logcat.txt"
 grep -E "AppTour|MoonlightCore|AndroidRuntime" "$OUT/logcat.txt" | tail -50 || true

@@ -48,6 +48,7 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.kotlinx.serialization.json)
     implementation(platform(libs.compose.bom))
@@ -58,6 +59,7 @@ dependencies {
     implementation(libs.compose.material.icons)
     implementation(libs.play.services.wallet)
     implementation(libs.compose.pay.button)
+    implementation(libs.play.billing)
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)
 

@@ -16,9 +16,11 @@ import com.paintbymoonlight.data.Library
 import com.paintbymoonlight.data.PaintingMeta
 import com.paintbymoonlight.data.Progress
 import com.paintbymoonlight.data.Thumbnails
+import com.paintbymoonlight.unlock.UnlimitedPaintings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -33,6 +35,8 @@ class CreateViewModel(
     /** The application's, not an Activity's, since the model outlives a rotation. */
     private val resolver: ContentResolver,
     private val uri: Uri,
+    /** Each painting made takes a free painting, until the unlock is bought. */
+    val paintings: UnlimitedPaintings,
 ) : ViewModel() {
     var photo by mutableStateOf<Bitmap?>(null)
         private set
@@ -91,7 +95,11 @@ class CreateViewModel(
                     aspect = scene.width / scene.height,
                 )
                 val thumb = withContext(Dispatchers.Default) { Thumbnails.render(scene, Progress(scene.regions.size)) }
-                library.add(meta, result.template, bitmap, thumb)
+                // Saved and counted together: a Back or Cancel now can't leave a painting saved but not counted.
+                withContext(NonCancellable) {
+                    library.add(meta, result.template, bitmap, thumb)
+                    paintings.started()
+                }
                 made = meta.id
             } catch (e: CancellationException) {
                 throw e

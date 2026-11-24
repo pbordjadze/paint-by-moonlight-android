@@ -13,7 +13,10 @@ native Jetpack Compose (Material 3 Expressive).
   line and prints its hash.
 - `app/`: the app. `core/` (Kotlin) is the bridge (`Core`, `Scene`), `data/` the library on disk,
   `ui/` the screens, `print/` One Big Sheet (the template printed full size through the iOS
-  app's print relay, `feedback-relay/print.js` in paint-by-number, paid with Google Pay).
+  app's print relay, `feedback-relay/print.js` in paint-by-number, paid with Google Pay),
+  `unlock/` Unlimited Paintings (five free paintings, one back each day; one Google Play purchase,
+  the product `unlimited_paintings`, lifts the limit). Debug builds, their tests and CI buy from
+  `FakeUnlockStore` (`src/debug/`), never from Play; release builds from `PlayUnlockStore`.
 - `scripts/build-core.sh` builds the core for each ABI into `app/src/main/jniLibs/`;
   `scripts/emulator-tour.sh` runs the probe and the app's tour on an emulator.
 - CI (`.github/workflows/android.yml`) builds everything, checks the emulator makes the host's
