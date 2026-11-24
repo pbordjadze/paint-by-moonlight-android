@@ -22,6 +22,8 @@ import androidx.navigation.compose.rememberNavController
 import com.paintbymoonlight.core.Core
 import com.paintbymoonlight.data.Library
 import com.paintbymoonlight.data.Thumbnails
+import com.paintbymoonlight.print.BigSheetScreen
+import com.paintbymoonlight.print.BigSheetViewModel
 import com.paintbymoonlight.ui.create.CreateScreen
 import com.paintbymoonlight.ui.create.CreateViewModel
 import com.paintbymoonlight.ui.gallery.GalleryScreen
@@ -50,8 +52,10 @@ private object Routes {
     const val GALLERY = "gallery"
     const val CREATE = "create?photo={photo}"
     const val PAINT = "paint/{id}"
+    const val PRINT = "print/{id}"
     fun create(photo: Uri) = "create?photo=${Uri.encode(photo.toString())}"
     fun paint(id: String) = "paint/$id"
+    fun print(id: String) = "print/$id"
 }
 
 @Composable
@@ -74,7 +78,7 @@ private fun MoonlightNav(app: MoonlightApp) {
                 onNew = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                 onOpen = { nav.navigate(Routes.paint(it)) },
                 onShare = share,
-                onPrint = null,
+                onPrint = { id -> nav.navigate(Routes.print(id)) },
                 onRename = { id, title -> scope.launch { library.rename(id, title) } },
                 onDelete = { id -> scope.launch { library.delete(id) } },
             )
@@ -99,8 +103,13 @@ private fun MoonlightNav(app: MoonlightApp) {
                 preferences = app.preferences,
                 onBack = { nav.popBackStack() },
                 onShare = { share(id) },
-                onPrint = null,
+                onPrint = { model.saveNow(); nav.navigate(Routes.print(id)) },
             )
+        }
+        composable(Routes.PRINT) { entry ->
+            val id = entry.arguments?.getString("id") ?: return@composable
+            val model = viewModel { BigSheetViewModel(library, id) }
+            BigSheetScreen(model = model, onBack = { nav.popBackStack() })
         }
     }
 }

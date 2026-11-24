@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- One Big Sheet: prices, the sheet and the order go to the print relay. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:name=".MoonlightApp"
         android:allowBackup="true"
@@ -20,6 +23,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Google Pay for One Big Sheet (print/GooglePay.kt). -->
+        <meta-data
+            android:name="com.google.android.gms.wallet.api.enabled"
+            android:value="true" />
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"
