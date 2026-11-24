@@ -10,6 +10,7 @@ import com.paintbymoonlight.core.Core
 import com.paintbymoonlight.data.Library
 import com.paintbymoonlight.data.PaintingMeta
 import com.paintbymoonlight.data.Thumbnails
+import com.paintbymoonlight.data.UnreadableProgress
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
@@ -47,6 +48,10 @@ class PaintViewModel(private val library: Library, val id: String) : ViewModel()
                 val scene = Core.scene(library.template(id), meta.seed, meta.nicknameVersion)
                 val progress = library.progress(id, scene.regions.size)
                 State.Ready(meta, PaintSession(scene, progress))
+            } catch (e: UnreadableProgress) {
+                // Nothing is saved from a painting that failed to open, so its progress file stays as it was.
+                Log.e("PaintViewModel", "progress unreadable", e)
+                State.Failed("This painting can’t be opened right now. Its progress is kept as it was.")
             } catch (e: Exception) {
                 State.Failed(e.message ?: "This painting couldn't be opened.")
             }

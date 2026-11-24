@@ -48,6 +48,9 @@ data class PaintingMeta(
     val aspect: Float = 0f,
 )
 
+/** A painting's progress file exists but couldn't be read, or doesn't fit its template; it is left untouched. */
+class UnreadableProgress(cause: Throwable?) : IOException("This painting’s progress couldn’t be read, so it was left as it is.", cause)
+
 /**
  * A painter's paintings, one folder each in the app's files: meta.json, template.pbnt (the
  * template, byte for byte as iOS saves it), progress.bin ([Progress]), photo.jpg, thumb.png.
@@ -126,9 +129,20 @@ class Library(context: Context) {
 
     suspend fun template(id: String): ByteArray = withContext(Dispatchers.IO) { File(folder(id), TEMPLATE).readBytes() }
 
+    /**
+     * The painting's progress; fresh only when it has none yet. A progress file that exists but
+     * can't be read now, or isn't this template's, throws [UnreadableProgress] and is kept as it
+     * is: never replaced with fresh progress, which a later save would write over it.
+     */
     suspend fun progress(id: String, regions: Int): Progress = withContext(Dispatchers.IO) {
         val file = File(folder(id), PROGRESS)
-        if (file.exists()) Progress.decode(file.readBytes(), regions) ?: Progress(regions) else Progress(regions)
+        if (!file.exists()) return@withContext Progress(regions)
+        val bytes = try {
+            file.readBytes()
+        } catch (e: IOException) {
+            throw UnreadableProgress(e)
+        }
+        Progress.decode(bytes, regions) ?: throw UnreadableProgress(null)
     }
 
     suspend fun photo(id: String): Bitmap? = withContext(Dispatchers.IO) {

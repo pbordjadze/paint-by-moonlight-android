@@ -16,6 +16,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -80,8 +81,13 @@ class Camera {
         private set
     private var rest: ((IntSize) -> Placement)? = null
     private var placed = false
-    /** Counts the painter's moves, so a flight they interrupt doesn't claim the camera rests. */
-    private var moves = 0
+    /**
+     * Counts the painter's moves (gestures, Hint and Zen flights), so a flight they interrupt
+     * doesn't claim the camera rests, and so only their moves, never an automatic placement,
+     * are saved as where the painting was left.
+     */
+    var moves by mutableIntStateOf(0)
+        private set
 
     /** Takes the viewport's size; the first time, places the camera with [initial]. */
     fun resize(size: IntSize, initial: () -> (IntSize) -> Placement) {

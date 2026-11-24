@@ -1,5 +1,6 @@
 package com.paintbymoonlight
 
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -20,6 +21,8 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import com.paintbymoonlight.core.Core
 import com.paintbymoonlight.core.PaintingLength
 import com.paintbymoonlight.data.Library
@@ -38,6 +41,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.MethodSorters
 import java.io.File
+import kotlin.math.abs
 
 /**
  * The app on a device, photographed for review. It starts with an empty gallery (first
@@ -209,12 +213,14 @@ class AppTour {
         ensurePaintings()
         try {
             shell("cmd uimode night yes")
+            waitForConfiguration { it.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES }
             waitFor(card("Parrots"))
             shoot("11-dark-gallery")
             openPainting("Parrots")
             shoot("12-dark-painting")
         } finally {
             shell("cmd uimode night no")
+            waitForConfiguration(lenient = true) { it.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_NO }
         }
     }
 
@@ -223,10 +229,34 @@ class AppTour {
         ensurePaintings()
         try {
             shell("settings put system font_scale 1.3")
+            waitForConfiguration { abs(it.fontScale - 1.3f) < 0.01f }
             openPainting("Parrots")
             shoot("13-painting-large-text")
         } finally {
             shell("settings put system font_scale 1.0")
+            waitForConfiguration(lenient = true) { abs(it.fontScale - 1f) < 0.01f }
+        }
+    }
+
+    /**
+     * Waits until the running activity has the configuration a setting just changed (the change
+     * recreates it, after the shell command returns) and the recreated activity is idle. Lenient
+     * when putting a setting back, so the restore never fails a test whose shots are taken.
+     */
+    private fun waitForConfiguration(lenient: Boolean = false, matches: (Configuration) -> Boolean) {
+        try {
+            compose.waitUntil(15_000) {
+                var current: Configuration? = null
+                instrumentation.runOnMainSync {
+                    current = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                        .firstOrNull()?.resources?.configuration
+                }
+                current?.let(matches) == true
+            }
+            compose.waitForIdle()
+        } catch (e: ComposeTimeoutException) {
+            if (!lenient) throw e
+            Log.w("AppTour", "the setting wasn't put back in time: ${e.message}")
         }
     }
 }

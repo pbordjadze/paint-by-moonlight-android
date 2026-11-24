@@ -185,10 +185,12 @@ private fun Painting(
         onDispose { lifecycle.removeObserver(observer) }
     }
 
-    // Where the canvas looks is saved with the painting, once it has been still a moment.
+    // Where the painter left the canvas is saved with the painting, once it has been still a
+    // moment (after a flight's spring too). Automatic placements (fits, transitions, the
+    // finish) are not the painter's and save nothing.
     LaunchedEffect(camera) {
-        snapshotFlow { camera.scale to camera.offset }.drop(1).collectLatest {
-            delay(500)
+        snapshotFlow { camera.moves }.drop(1).collectLatest {
+            delay(900)
             if (camera.viewport.width > 0) {
                 session.progress.view = camera.view(scene.width, scene.height, inset)
                 model.viewChanged()
