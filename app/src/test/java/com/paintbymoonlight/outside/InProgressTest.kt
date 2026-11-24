@@ -24,6 +24,11 @@ class InProgressTest {
         assertEquals("new", inProgress(paintings)?.id)
     }
 
+    @Test fun aSaveThatPaintsNothingLeavesTheWidgetAlone() {
+        val before = meta("a", created = 10, updated = 20)
+        assertEquals(nowPainting(listOf(before)), nowPainting(listOf(before.copy(updated = 30))))
+    }
+
     @Test fun percentIsTheIOSRule() {
         assertEquals(0, percentPainted(0, 200))
         assertEquals(1, percentPainted(1, 200))

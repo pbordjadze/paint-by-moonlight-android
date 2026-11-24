@@ -14,6 +14,10 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
@@ -55,11 +59,10 @@ class MainActivity : ComponentActivity() {
 
 private object Routes {
     const val GALLERY = "gallery"
-    const val CREATE = "create?photo={photo}"
+    const val CREATE = "create"
     const val PAINT = "paint/{id}"
     const val NEW = "new"
     const val PRINT = "print/{id}"
-    fun create(photo: Uri) = "create?photo=${Uri.encode(photo.toString())}"
     fun paint(id: String) = "paint/$id"
     fun print(id: String) = "print/$id"
 }
@@ -71,8 +74,14 @@ private fun MoonlightNav(app: MoonlightApp) {
     val scope = rememberCoroutineScope()
     val library = app.library
 
+    // The photo is held here, never in the route: every route is also a deep link any app can
+    // send, and a photo in one would be read with this app's permissions.
+    var picked by rememberSaveable { mutableStateOf<Uri?>(null) }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) nav.navigate(Routes.create(uri))
+        if (uri != null) {
+            picked = uri
+            nav.navigate(Routes.CREATE)
+        }
     }
     val share: (String) -> Unit = { id -> scope.launch { sharePainting(context, library, id) } }
 
@@ -88,8 +97,12 @@ private fun MoonlightNav(app: MoonlightApp) {
                 onDelete = { id -> scope.launch { library.delete(id) } },
             )
         }
-        composable(Routes.CREATE) { entry ->
-            val photo = Uri.parse(entry.arguments?.getString("photo") ?: "")
+        composable(Routes.CREATE) {
+            val photo = picked
+            if (photo == null) {
+                LaunchedEffect(Unit) { nav.popBackStack() }
+                return@composable
+            }
             val model = viewModel { CreateViewModel(library, app.contentResolver, photo) }
             CreateScreen(
                 model = model,

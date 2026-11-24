@@ -11,7 +11,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.unit.DpSize
+import androidx.core.graphics.scale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
@@ -54,10 +56,11 @@ import androidx.glance.text.TextStyle
 import com.paintbymoonlight.MoonlightApp
 import com.paintbymoonlight.R
 import com.paintbymoonlight.data.Library
-import com.paintbymoonlight.data.PaintingMeta
 import com.paintbymoonlight.ui.theme.DarkColors
 import com.paintbymoonlight.ui.theme.LightColors
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.withContext
 
 /**
@@ -70,23 +73,23 @@ class PaintingWidget : GlanceAppWidget() {
     override val sizeMode = SizeMode.Responsive(setOf(SMALL, WIDE, LARGE))
     override val previewSizeMode = SizeMode.Responsive(setOf(SMALL, WIDE, LARGE))
 
+    @OptIn(FlowPreview::class)
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val library = (context.applicationContext as MoonlightApp).library
         library.awaitLoaded()
-        val first = inProgress(library.paintings.value)
-        val firstKey = first?.let { it.id to it.updated }
-        val firstPicture = first?.let { picture(library, it) }
+        val first = nowPainting(library.paintings.value)
+        val firstKey = first?.let { it.id to library.thumbnailFile(it.id).lastModified() }
+        val firstPicture = first?.let { picture(library, it.id) }
         provideContent {
-            // While the widget's session lives it follows the library itself; the picture read
-            // before the session began stands until the painting is saved again.
-            val paintings by library.paintings.collectAsState()
-            val now = inProgress(paintings)
-            val key = now?.let { it.id to it.updated }
+            // While the widget's session lives it follows the painting itself, at the pace
+            // OutsideDesk draws it; the picture is read again only when the thumbnail changed.
+            val now by remember { library.nowPainting().debounce(OutsideDesk.PAUSE_MILLIS) }.collectAsState(first)
+            val key = now?.let { it.id to library.thumbnailFile(it.id).lastModified() }
             val picture by produceState(if (key == firstKey) firstPicture else null, key) {
-                if (key != firstKey) value = now?.let { picture(library, it) }
+                if (key != firstKey) value = now?.let { picture(library, it.id) }
             }
             GlanceTheme(colors = widgetColors(context)) {
-                PaintingWidgetContent(now?.let { Shown(it.id, it.title, it.paintedCount, it.regionCount, picture?.let(::ImageProvider)) })
+                PaintingWidgetContent(now?.let { Shown(it.id, it.title, it.painted, it.total, picture?.let(::ImageProvider)) })
             }
         }
     }
@@ -116,10 +119,15 @@ data class Shown(val id: String, val title: String, val painted: Int, val total:
     val percent get() = percentPainted(painted, total)
 }
 
-/** The thumbnail the gallery shows, which every save draws again. */
-private suspend fun picture(library: Library, meta: PaintingMeta): Bitmap? = withContext(Dispatchers.IO) {
-    BitmapFactory.decodeFile(library.thumbnailFile(meta.id).path)
+/** The thumbnail the gallery shows, which every save draws again, at a size a widget needs. */
+private suspend fun picture(library: Library, id: String): Bitmap? = withContext(Dispatchers.IO) {
+    val thumb = BitmapFactory.decodeFile(library.thumbnailFile(id).path) ?: return@withContext null
+    val k = WIDGET_PIXELS / maxOf(thumb.width, thumb.height).toFloat()
+    if (k >= 1f) thumb else thumb.scale((thumb.width * k).toInt().coerceAtLeast(1), (thumb.height * k).toInt().coerceAtLeast(1))
 }
+
+/** The picture's long side: sharp on the largest widget, and well inside RemoteViews' bitmap budget. */
+private const val WIDGET_PIXELS = 400
 
 /**
  * Moonlight's colors, with the home screen's own surfaces on Android 12 and later, so the

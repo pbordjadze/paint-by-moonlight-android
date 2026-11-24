@@ -22,6 +22,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -51,15 +52,16 @@ object OutsideDesk {
         }
         scope.launch {
             library.awaitLoaded()
-            library.paintings
-                .map { list -> inProgress(list) }
-                .distinctUntilChanged()
-                // A painter fills areas quickly; draw the widget again once they pause.
-                .debounce(800)
+            // A painter fills areas quickly; draw the widget again once they pause.
+            library.nowPainting()
+                .debounce(PAUSE_MILLIS)
                 .collect { guarded("update the widget") { PaintingWidget().updateAll(app) } }
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) scope.launch { publishPreviews(app) }
     }
+
+    /** How long the painter pauses before the widget is drawn again. */
+    const val PAUSE_MILLIS = 800L
 
     private data class Painting(val id: String, val title: String)
 
@@ -132,3 +134,6 @@ object OutsideDesk {
 
     private const val ICON_PIXELS = 288
 }
+
+/** The painting in progress as the widget shows it, each change once. */
+fun Library.nowPainting(): Flow<NowPainting?> = paintings.map(::nowPainting).distinctUntilChanged()

@@ -8,8 +8,10 @@ import com.paintbymoonlight.MainActivity
 
 /**
  * The app's own links, which the widget and the launcher's shortcuts open and the NavHost
- * answers (its deep links). They are explicit intents to [MainActivity], so no other app can
- * send them and the manifest needs no intent filter.
+ * answers (its deep links). The app sends them as explicit intents to [MainActivity], so the
+ * manifest needs no intent filter; but MainActivity is exported, so another app can send them
+ * too. They carry nothing but a painting's id, which opens only a painting already in the
+ * library (an unknown one shows the paint screen's error), or open the photo picker.
  */
 object Links {
     private const val SCHEME = "paintbymoonlight"
