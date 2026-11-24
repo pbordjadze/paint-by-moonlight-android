@@ -1,12 +1,28 @@
 package com.paintbymoonlight.core
 
+import android.graphics.Color
+import android.graphics.ColorSpace
 import android.graphics.Path
 import android.graphics.RectF
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.math.hypot
 
-/** A paint of the palette: its sRGB color (0xAARRGGBB) and nickname. Its number is index + 1. */
-class Paint(val color: Int, val name: String)
+/**
+ * A paint of the palette. Its number is index + 1. [color] is sRGB (0xAARRGGBB), for pictures;
+ * [p3] the template's own paint in Display P3 (a packed `android.graphics.Color` long), for the
+ * canvas and the palette, which show it on a wide-gamut screen as iOS does. [name] is its
+ * nickname ("Harbor Fog"; empty for a color the vocabulary doesn't name), [shade] its plain
+ * color name ("Dark grayish green") and [hex] its code ("#3A5F4B").
+ */
+class Paint(val color: Int, val p3: Long, val name: String, val shade: String, val hex: String) {
+    /** "12 · Harbor Fog", or "12 · Dark grayish green" without a nickname: the paint on screen. */
+    fun numbered(index: Int) = "${index + 1} · ${name.ifEmpty { shade }}"
+
+    /** What TalkBack says of it: "12, Harbor Fog, dark grayish green". */
+    fun spoken(index: Int) =
+        if (name.isEmpty()) "${index + 1}, ${shade.lowercase()}" else "${index + 1}, $name, ${shade.lowercase()}"
+}
 
 /**
  * An area to paint. [path] is its outline in canvas units, holes included (even-odd);
@@ -36,10 +52,39 @@ class Region(
         }
         return inside
     }
+
+    /** How far a point lies from the area: 0 inside, else to its nearest outline. */
+    fun distanceTo(x: Float, y: Float): Float {
+        if (contains(x, y)) return 0f
+        var best = Float.MAX_VALUE
+        for (loop in polygons) {
+            val n = loop.size / 2
+            var j = n - 1
+            for (i in 0 until n) {
+                val ax = loop[2 * j]; val ay = loop[2 * j + 1]
+                val dx = loop[2 * i] - ax; val dy = loop[2 * i + 1] - ay
+                val len2 = dx * dx + dy * dy
+                val t = if (len2 > 0f) (((x - ax) * dx + (y - ay) * dy) / len2).coerceIn(0f, 1f) else 0f
+                best = minOf(best, hypot(ax + t * dx - x, ay + t * dy - y))
+                j = i
+            }
+        }
+        return best
+    }
 }
 
-/** A number on the canvas: where, how big (canvas units) and whose. */
-class Label(val x: Float, val y: Float, val fontSize: Float, val region: Int)
+/** A number on the canvas: where, how big (canvas units), whose, and the free circle it sits in. */
+class Label(val x: Float, val y: Float, val fontSize: Float, val region: Int, val radius: Float)
+
+/**
+ * A boundary between two areas ([right] is [OUTSIDE] along the canvas's border), as a flat
+ * x, y array. [drawn] is false for a coloring book's color edge, which the canvas leaves out.
+ */
+class Edge(val left: Int, val right: Int, val drawn: Boolean, val points: FloatArray) {
+    companion object {
+        const val OUTSIDE = -1
+    }
+}
 
 /**
  * What the canvas draws: core/Sources/MoonlightCore/Scene.swift writes it (its doc comment is
@@ -48,14 +93,42 @@ class Label(val x: Float, val y: Float, val fontSize: Float, val region: Int)
 class Scene(
     val width: Float,
     val height: Float,
+    /**
+     * A coloring book: its drawing's lines stay whole over the paint and its color edges aren't
+     * drawn. Otherwise classic: every edge drawn, dissolving between painted areas.
+     */
+    val isColoringBook: Boolean,
     val paints: List<Paint>,
     val regions: List<Region>,
-    /** Every boundary once, as one path. */
+    val edges: List<Edge>,
+    /** Every boundary once, as one path (pictures and print). */
     val lines: Path,
     val labels: List<Label>,
     /** Line art drawn inside areas, as one path. */
     val strokes: Path,
+    /** The same lines as flat x, y arrays, for the canvas. */
+    val strokePoints: List<FloatArray>,
 ) {
+    /** Each area's largest number, by area: where its paint and its sparkles start. */
+    val labelOf: IntArray by lazy {
+        val best = IntArray(regions.size) { -1 }
+        labels.forEachIndexed { i, l ->
+            if (l.region in regions.indices && (best[l.region] < 0 || labels[best[l.region]].radius < l.radius)) best[l.region] = i
+        }
+        best
+    }
+
+    /**
+     * A small-but-typical number size (the tenth percentile), or a detail area's smallest when
+     * that is smaller: the deepest zoom makes these read (iOS's `CanvasScene.smallLabelSize`).
+     */
+    val smallLabelSize: Float by lazy {
+        val sizes = labels.map { it.fontSize }.filter { it > 0 }.sorted()
+        val typical = if (sizes.isEmpty()) 1f else sizes[sizes.size / 10]
+        val detail = labels.filter { it.region in regions.indices && regions[it.region].isDetail }.minOfOrNull { it.fontSize }
+        minOf(typical, detail ?: typical)
+    }
+
     /** Areas of each paint, by paint index. */
     val regionsByPaint: List<IntArray> by lazy {
         val lists = List(paints.size) { ArrayList<Int>() }
@@ -76,7 +149,7 @@ class Scene(
     }
 
     companion object {
-        const val VERSION = 1
+        const val VERSION = 2
 
         fun read(bytes: ByteArray): Scene {
             val b = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
@@ -85,11 +158,12 @@ class Scene(
             require(b.int == VERSION) { "scene version" }
             val width = b.float
             val height = b.float
+            val book = b.int and 1 != 0
 
             val paints = List(b.count()) {
                 val r = b.float; val g = b.float; val bl = b.float
-                val name = ByteArray(b.count()).also { b.get(it) }.decodeToString()
-                Paint(rgb(r, g, bl), name)
+                val p3 = Color.pack(b.float.unit(), b.float.unit(), b.float.unit(), 1f, ColorSpace.get(ColorSpace.Named.DISPLAY_P3))
+                Paint(rgb(r, g, bl), p3, name = b.string(), shade = b.string(), hex = b.string())
             }
 
             val regions = List(b.count()) {
@@ -111,15 +185,26 @@ class Scene(
             }
 
             val lines = Path()
-            repeat(b.count()) { lines.addPolyline(b.points()) }
+            val edges = List(b.count()) {
+                val left = b.int
+                val right = b.int
+                val drawn = b.int != 0
+                val points = b.points()
+                lines.addPolyline(points)
+                Edge(left, right, drawn, points)
+            }
 
-            val labels = List(b.count()) { Label(b.float, b.float, b.float, b.int) }
+            val labels = List(b.count()) { Label(b.float, b.float, b.float, b.int, b.float) }
 
             val strokes = Path()
-            repeat(b.count()) { strokes.addPolyline(b.points()) }
+            val strokePoints = List(b.count()) { b.points().also { strokes.addPolyline(it) } }
 
-            return Scene(width, height, paints, regions, lines, labels, strokes)
+            return Scene(width, height, book, paints, regions, edges, lines, labels, strokes, strokePoints)
         }
+
+        private fun ByteBuffer.string(): String = ByteArray(count()).also { get(it) }.decodeToString()
+
+        private fun Float.unit() = coerceIn(0f, 1f)
 
         private fun ByteBuffer.count(): Int {
             val n = int

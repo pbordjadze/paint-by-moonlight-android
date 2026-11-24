@@ -1,9 +1,10 @@
-// moonlight-probe <photo.ppm> [quick|relaxed|detailed] [--out template.pbnt]
+// moonlight-probe <photo.ppm> [quick|relaxed|detailed] [--out template.pbnt] [--scene scene.mlsc]
 // moonlight-probe --shared <painting.moonlight>…
 //
 // Makes a painting from a PPM photo exactly as the Android app does (Engine.make) and prints
 // what it made and the FNV-1a hash of the encoded template. Run on Linux and on an Android
-// emulator (adb shell): scripts/emulator-tour.sh compares the two.
+// emulator (adb shell): scripts/emulator-tour.sh compares the two. --scene writes the scene the
+// canvas reads (Scene.swift), which scripts/read-scene.py lists.
 //
 // With --shared, reads each `.moonlight` file as the app opens one someone sent
 // (Exchange.read), prints what it holds, writes it back as the app sends one (Exchange.write,
@@ -22,13 +23,15 @@ var args = Array(CommandLine.arguments.dropFirst())
 if args.first == "--shared" {
     exit(sharedProbe(Array(args.dropFirst())))
 }
-var outPath: String?
-if let i = args.firstIndex(of: "--out"), i + 1 < args.count {
-    outPath = args[i + 1]
-    args.removeSubrange(i...(i + 1))
+func option(_ name: String, in args: inout [String]) -> String? {
+    guard let i = args.firstIndex(of: name), i + 1 < args.count else { return nil }
+    defer { args.removeSubrange(i...(i + 1)) }
+    return args[i + 1]
 }
+let outPath = option("--out", in: &args)
+let scenePath = option("--scene", in: &args)
 guard let path = args.first, let data = FileManager.default.contents(atPath: path) else {
-    let usage = "usage: moonlight-probe <photo.ppm> [quick|relaxed|detailed] [--out t.pbnt]\n"
+    let usage = "usage: moonlight-probe <photo.ppm> [quick|relaxed|detailed] [--out t.pbnt] [--scene s.mlsc]\n"
     _ = usage.withCString { write(2, $0, strlen($0)) }
     exit(2)
 }
@@ -49,6 +52,7 @@ print("""
     hash \(fnv1a(bytes))
     """)
 if let outPath { _ = FileManager.default.createFile(atPath: outPath, contents: Data(bytes)) }
+if let scenePath { _ = FileManager.default.createFile(atPath: scenePath, contents: Data(scene)) }
 
 func fnv1a(_ bytes: some Sequence<UInt8>) -> String {
     var hash: UInt64 = 0xcbf2_9ce4_8422_2325
