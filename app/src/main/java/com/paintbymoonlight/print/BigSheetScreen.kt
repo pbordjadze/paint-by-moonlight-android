@@ -84,7 +84,7 @@ import com.google.pay.button.ButtonType
 import com.google.pay.button.PayButton
 import com.paintbymoonlight.ui.theme.Moonlight
 import java.time.format.DateTimeFormatter
-import java.util.Locale
+import androidx.compose.ui.platform.LocalConfiguration
 import kotlin.math.max
 import kotlin.math.min
 
@@ -279,6 +279,8 @@ private fun ShipTo(country: String, onPick: (String) -> Unit) {
 
 @Composable
 private fun Notes(model: BigSheetViewModel) {
+    // The configuration's locale, so the date follows a change of language.
+    val locale = LocalConfiguration.current.locales[0]
     val notes = buildList {
         add(
             when (model.product.surface) {
@@ -289,7 +291,7 @@ private fun Notes(model: BigSheetViewModel) {
             },
         )
         BigSheetSeason.cutoff(model.country)?.let { cutoff ->
-            add("Order by ${cutoff.format(DateTimeFormatter.ofPattern("MMMM d", Locale.getDefault()))} to have it for Christmas")
+            add("Order by ${cutoff.format(DateTimeFormatter.ofPattern("MMMM d", locale))} to have it for Christmas")
         }
         if (model.printsSmallNumbers) add("Some numbers print small at this size: the larger sheet reads more easily.")
         model.currentQuote?.let { quote ->

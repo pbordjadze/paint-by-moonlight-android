@@ -141,6 +141,8 @@ class Box(val left: Float, val top: Float, val right: Float, val bottom: Float) 
     fun centerX() = (left + right) / 2
     fun centerY() = (top + bottom) / 2
     fun contains(x: Float, y: Float) = x >= left && x < right && y >= top && y < bottom
+    /** Whether it overlaps [r] (a printed sheet's visible part, say), as `RectF.intersects`. */
+    fun intersects(r: android.graphics.RectF) = left < r.right && r.left < right && top < r.bottom && r.top < bottom
 }
 
 /** A number on the canvas: where, how big (canvas units), whose, and the free circle it sits in. */
@@ -180,6 +182,10 @@ class Scene(
 
     /** Line art drawn inside areas, as one path. */
     val strokes: Path by lazy { Path().apply { strokePoints.forEach { addPolyline(it) } } }
+
+    /** [lines] and [strokes] as their polylines (flat x, y), for drawing only the part a printed sheet shows. */
+    val linePolylines: List<FloatArray> get() = edges.map { it.points }
+    val strokePolylines: List<FloatArray> get() = strokePoints
 
     /** The paths, made now (a reader's thread) rather than at the first frame. */
     fun prepare(): Scene {

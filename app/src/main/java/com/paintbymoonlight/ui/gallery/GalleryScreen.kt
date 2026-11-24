@@ -21,7 +21,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
@@ -93,9 +96,11 @@ fun GalleryScreen(
     onNew: () -> Unit,
     onOpen: (String) -> Unit,
     onShare: (String) -> Unit,
-    onPrint: ((String) -> Unit)?,
+    onPrintPages: (String) -> Unit,
     onRename: (String, String) -> Unit,
     onDelete: (String) -> Unit,
+    /** Something new to paint, under the paintings (or the empty page's words). */
+    shelf: @Composable () -> Unit = {},
 ) {
     val paintings by library.paintings.collectAsStateWithLifecycle()
     val loaded by library.loaded.collectAsStateWithLifecycle()
@@ -128,7 +133,7 @@ fun GalleryScreen(
         },
     ) { padding ->
         if (paintings.isEmpty()) {
-            if (loaded) Empty(Modifier.padding(padding))
+            if (loaded) Empty(Modifier.padding(padding), shelf)
         } else {
             // Each painting whole at its own shape, so the columns stagger.
             LazyVerticalStaggeredGrid(
@@ -146,12 +151,13 @@ fun GalleryScreen(
                         onOpen = { onOpen(meta.id) },
                         onShare = { onShare(meta.id) },
                         onSend = { sending = meta },
-                        onPrint = onPrint?.let { print -> { print(meta.id) } },
+                        onPrintPages = { onPrintPages(meta.id) },
                         onRename = { renaming = meta },
                         onDelete = { deleting = meta },
                         modifier = Modifier.animateItem(),
                     )
                 }
+                item(key = "shelf", span = StaggeredGridItemSpan.FullLine) { shelf() }
             }
         }
     }
@@ -190,9 +196,9 @@ private fun countText(paintings: List<PaintingMeta>): String {
 }
 
 @Composable
-private fun Empty(modifier: Modifier) {
+private fun Empty(modifier: Modifier, shelf: @Composable () -> Unit) {
     Column(
-        modifier.fillMaxSize().padding(40.dp),
+        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 40.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -206,6 +212,7 @@ private fun Empty(modifier: Modifier) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
+        shelf()
     }
 }
 
@@ -217,7 +224,7 @@ private fun PaintingCard(
     onOpen: () -> Unit,
     onShare: () -> Unit,
     onSend: () -> Unit,
-    onPrint: (() -> Unit)?,
+    onPrintPages: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
@@ -283,15 +290,14 @@ private fun PaintingCard(
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Rounded.Edit, null) }, onClick = { menu = false; onRename() })
             DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Rounded.Share, null) }, onClick = { menu = false; onShare() })
+            // One Big Sheet is offered inside Print, as on iOS: one way to print per menu.
+            DropdownMenuItem(text = { Text("Print…") }, leadingIcon = { Icon(Icons.Rounded.Print, null) }, onClick = { menu = false; onPrintPages() })
             // Paint by Moonlight, on either platform, opens it as a new painting, blank.
             DropdownMenuItem(
                 text = { Text("Send Template…") },
                 leadingIcon = { Icon(Icons.AutoMirrored.Rounded.Send, null) },
                 onClick = { menu = false; onSend() },
             )
-            if (onPrint != null) {
-                DropdownMenuItem(text = { Text("Print it big") }, leadingIcon = { Icon(Icons.Rounded.Print, null) }, onClick = { menu = false; onPrint() })
-            }
             DropdownMenuItem(
                 text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
                 leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.error) },

@@ -22,6 +22,16 @@ native Jetpack Compose (Material 3 Expressive).
   `unlock/` Unlimited Paintings (five free paintings, one back each day; one Google Play purchase,
   the product `unlimited_paintings`, lifts the limit). Debug builds, their tests and CI buy from
   `FakeUnlockStore` (`src/debug/`), never from Play; release builds from `PlayUnlockStore`.
+  `pictures/` is what a painter paints that isn't their own photo: the iOS app's picture library
+  (`assets/samples/`, its `library.json` and JPEGs byte for byte, credits in the Paint page's
+  Picture credits) and Tonight's Picture, the library's paintings in turn by calendar day as iOS
+  counts them. What iOS keeps behind `#if UNRELEASED` lives in `src/debug/` alone, reached through
+  `Unreleased` (`src/release/`'s answers with nothing), so release builds carry none of it: the
+  Museum (`museum/`, `ui/museum/`: the iOS app's open-access catalog and the museums' own
+  pictures) and Tonight's Picture from the museums' nightly schedule (`pictures/Nights.kt`), read
+  from paint-by-number's `museum` and `nights` branches. `scripts/museum-reference.sh` prints
+  what iOS's own Museum code makes of the test catalog, which `MuseumQueryTest` compares line by
+  line.
 - `app/src/main/assets/models/`: the line models (HED and Informative Drawings, the iOS app's),
   converted by `tools/models/convert.py` (its docstring is their provenance; credits and
   licenses in `ACKNOWLEDGEMENTS.md`). `tools/edges.py` makes a photo's two maps on the host as

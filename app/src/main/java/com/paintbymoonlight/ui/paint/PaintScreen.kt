@@ -63,6 +63,7 @@ import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Print
 import androidx.compose.material.icons.rounded.SelfImprovement
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -125,13 +126,14 @@ fun PaintScreen(
     onBack: () -> Unit,
     onShare: () -> Unit,
     onPrint: (() -> Unit)?,
+    onPrintPages: (() -> Unit)? = null,
 ) {
     when (val state = model.state) {
         PaintViewModel.State.Loading -> Opening(model.id, thumbnail)
         is PaintViewModel.State.Failed -> Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
             Text(state.message, style = MaterialTheme.typography.bodyLarge)
         }
-        is PaintViewModel.State.Ready -> Painting(model, state, preferences, onBack, onShare, onPrint)
+        is PaintViewModel.State.Ready -> Painting(model, state, preferences, onBack, onShare, onPrint, onPrintPages)
     }
 }
 
@@ -170,6 +172,7 @@ private fun Painting(
     onBack: () -> Unit,
     onShare: () -> Unit,
     onPrint: (() -> Unit)?,
+    onPrintPages: (() -> Unit)?,
 ) {
     val session = state.session
     val camera = remember { Camera() }
@@ -447,6 +450,13 @@ private fun Painting(
                             text = { Text("Share") },
                             leadingIcon = { Icon(Icons.Rounded.Share, null) },
                             onClick = { menu = false; onShare() },
+                        )
+                    }
+                    if (onPrintPages != null) {
+                        DropdownMenuItem(
+                            text = { Text("Print…") },
+                            leadingIcon = { Icon(Icons.Rounded.Print, null) },
+                            onClick = { menu = false; onPrintPages() },
                         )
                     }
                 }
