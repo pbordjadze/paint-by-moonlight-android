@@ -53,6 +53,25 @@ class Region(
         return inside
     }
 
+    /**
+     * How far the segment [ax], [ay] → [bx], [by] passes from the area: 0 if it enters it, else
+     * to its nearest outline (what a brush sweeping the segment needs to reach it).
+     */
+    fun distanceToSegment(ax: Float, ay: Float, bx: Float, by: Float): Float {
+        if (contains(ax, ay) || contains(bx, by)) return 0f
+        var best = Float.MAX_VALUE
+        for (loop in polygons) {
+            val n = loop.size / 2
+            var j = n - 1
+            for (i in 0 until n) {
+                best = minOf(best, segmentDistance(ax, ay, bx, by, loop[2 * j], loop[2 * j + 1], loop[2 * i], loop[2 * i + 1]))
+                if (best == 0f) return 0f
+                j = i
+            }
+        }
+        return best
+    }
+
     /** How far a point lies from the area: 0 inside, else to its nearest outline. */
     fun distanceTo(x: Float, y: Float): Float {
         if (contains(x, y)) return 0f
@@ -71,6 +90,28 @@ class Region(
         }
         return best
     }
+}
+
+/** The distance between segments p0→p1 and q0→q1: 0 where they cross. */
+internal fun segmentDistance(
+    p0x: Float, p0y: Float, p1x: Float, p1y: Float, q0x: Float, q0y: Float, q1x: Float, q1y: Float,
+): Float {
+    fun cross(ax: Float, ay: Float, bx: Float, by: Float, cx: Float, cy: Float) = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+    val d1 = cross(q0x, q0y, q1x, q1y, p0x, p0y)
+    val d2 = cross(q0x, q0y, q1x, q1y, p1x, p1y)
+    val d3 = cross(p0x, p0y, p1x, p1y, q0x, q0y)
+    val d4 = cross(p0x, p0y, p1x, p1y, q1x, q1y)
+    if (((d1 > 0) != (d2 > 0)) && ((d3 > 0) != (d4 > 0))) return 0f
+    fun pointToSegment(x: Float, y: Float, ax: Float, ay: Float, bx: Float, by: Float): Float {
+        val dx = bx - ax; val dy = by - ay
+        val len2 = dx * dx + dy * dy
+        val t = if (len2 > 0f) (((x - ax) * dx + (y - ay) * dy) / len2).coerceIn(0f, 1f) else 0f
+        return hypot(ax + t * dx - x, ay + t * dy - y)
+    }
+    return minOf(
+        minOf(pointToSegment(p0x, p0y, q0x, q0y, q1x, q1y), pointToSegment(p1x, p1y, q0x, q0y, q1x, q1y)),
+        minOf(pointToSegment(q0x, q0y, p0x, p0y, p1x, p1y), pointToSegment(q1x, q1y, p0x, p0y, p1x, p1y)),
+    )
 }
 
 /** A number on the canvas: where, how big (canvas units), whose, and the free circle it sits in. */

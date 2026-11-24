@@ -104,6 +104,10 @@ object CanvasLook {
         return wave * (1 - t / 2)
     }
 
+    /** A drag's brush: 11 pt on screen, at most this many canvas units (iOS's `maxBrushRadius`). */
+    const val brushRadius = 11f
+    const val maxBrushRadius = 96f
+
     /** A fill spreads this long: a little longer the bigger it is on screen ([reach] in points). */
     fun fillSeconds(reach: Float) = (0.2f + reach / 700f).coerceIn(0.25f, 0.6f)
     /** The fill that finishes the painting lingers. */

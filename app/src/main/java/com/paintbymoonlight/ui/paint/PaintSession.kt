@@ -38,6 +38,11 @@ class PaintSession(val scene: Scene, val progress: Progress) {
 
     private val remaining = IntArray(scene.paints.size)
     private val listeners = ArrayList<(PaintEvent) -> Unit>()
+    /** Fills per undo step, newest last: a tap is one, a stroke all it painted. Fills from before this visit undo one by one. */
+    private val steps = ArrayList<Int>()
+    /** The paint a stroke under way paints with, and how many areas it has painted. */
+    private var strokePaint: Int? = null
+    private var strokeFills = 0
 
     init {
         scene.regions.forEachIndexed { i, r -> if (!progress.isPainted(i)) remaining[r.paint]++ }
@@ -76,7 +81,7 @@ class PaintSession(val scene: Scene, val progress: Progress) {
         val hit = scene.regionAt(x, y)
         val target = if (hit != null && !progress.isPainted(hit) && scene.regions[hit].paint == selected) hit
         else nearestUnpainted(x, y, tolerance)
-        if (target != null) return fill(target, x, y)
+        if (target != null) return fill(target, x, y).also { if (it is Tap.Painted) steps.add(1) }
         if (hit == null || progress.isPainted(hit)) return Tap.Nothing
         emit(PaintEvent.Rejected(hit))
         return Tap.OtherPaint(hit, scene.regions[hit].paint)
@@ -114,17 +119,62 @@ class PaintSession(val scene: Scene, val progress: Progress) {
     }
 
     /**
-     * Takes the last fill back. The paint in hand stays in hand, as on iOS; a finished painting,
-     * which holds none, takes up the undone area's.
+     * Takes the last step back: a tap's fill, or everything a stroke painted. The paint in hand
+     * stays in hand, as on iOS; a finished painting, which holds none, takes up the undone
+     * area's. Returns the last area undone.
      */
     fun undo(): Int? {
-        val region = progress.undo() ?: return null
-        val paint = scene.regions[region].paint
-        remaining[paint]++
-        if (selected !in scene.paints.indices || remaining[selected] == 0) select(paint)
-        changes++
-        emit(PaintEvent.Undone(region))
-        return region
+        var last: Int? = null
+        repeat(steps.removeLastOrNull() ?: 1) {
+            val region = progress.undo() ?: return@repeat
+            val paint = scene.regions[region].paint
+            remaining[paint]++
+            if (selected !in scene.paints.indices || remaining[selected] == 0) select(paint)
+            changes++
+            emit(PaintEvent.Undone(region))
+            last = region
+        }
+        return last
+    }
+
+    /** A drag begins: it paints with the paint in hand, even once finishing it moves the hand on. */
+    fun beginStroke(): Boolean {
+        if (selected !in scene.paints.indices || isComplete) return false
+        strokePaint = selected
+        strokeFills = 0
+        return true
+    }
+
+    /**
+     * Paints every unpainted area of the stroke's paint that a brush of [radius] canvas units
+     * touches moving from [ax], [ay] to [bx], [by], in the order it reaches them.
+     */
+    fun drag(ax: Float, ay: Float, bx: Float, by: Float, radius: Float): List<Tap.Painted> {
+        val paint = strokePaint ?: return emptyList()
+        val radius = radius.coerceIn(0f, CanvasLook.maxBrushRadius)
+        val dx = bx - ax
+        val dy = by - ay
+        val len2 = dx * dx + dy * dy
+        val found = scene.regionsByPaint[paint].filter { r ->
+            if (progress.isPainted(r)) return@filter false
+            val b = scene.regions[r].bounds
+            if (b.right < minOf(ax, bx) - radius || b.left > maxOf(ax, bx) + radius) return@filter false
+            if (b.bottom < minOf(ay, by) - radius || b.top > maxOf(ay, by) + radius) return@filter false
+            scene.regions[r].distanceToSegment(ax, ay, bx, by) <= radius
+        }.sortedBy { r ->
+            val b = scene.regions[r].bounds
+            if (len2 > 0f) ((b.centerX() - ax) * dx + (b.centerY() - ay) * dy) / len2 else 0f
+        }
+        return found.mapNotNull { (fill(it, bx, by) as? Tap.Painted)?.also { strokeFills++ } }
+    }
+
+    /** The stroke ends; everything it painted undoes together. Returns how many areas it painted. */
+    fun endStroke(): Int {
+        val fills = strokeFills
+        if (strokePaint != null && fills > 0) steps.add(fills)
+        strokePaint = null
+        strokeFills = 0
+        return fills
     }
 
     val canUndo get() = progress.paintedCount > 0

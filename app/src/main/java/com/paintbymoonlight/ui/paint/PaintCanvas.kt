@@ -27,10 +27,13 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
@@ -71,6 +74,8 @@ class CanvasMotion {
         private set
     /** Under Reduce Motion: nothing spreads, glides, pops or shines. */
     var still = false
+    /** Where a drag's brush is, in the view (px), while one paints. */
+    internal var brush by mutableStateOf<Offset?>(null)
 
     /**
      * When something began: stamped with the first frame after it was asked for, on the frame
@@ -137,12 +142,13 @@ private class Recorded {
     var changes = -1
     var excluding: Set<Int> = emptySet()
     var tintKey: Triple<Int, Int, Set<Int>>? = null
-    val tint = Path()
+    // Even-odd, as each area's own path: an area's hole stays out unless its island is in too.
+    val tint = Path().apply { fillType = Path.FillType.EVEN_ODD }
     var linesKey: Triple<Int, Int, Set<Int>>? = null
     var lines = FloatArray(0)
     var bold = FloatArray(0)
     var shineKey: Int? = null
-    val shine = Path()
+    val shine = Path().apply { fillType = Path.FillType.EVEN_ODD }
 }
 
 /**
@@ -155,6 +161,14 @@ private class Recorded {
  * settles; two gold sparkles pop beside it. Painted areas are recorded into a RenderNode
  * replayed at any zoom. [placement] says where the camera starts.
  */
+/** A drag that paints (iOS's long press, then drag): where it goes, in the view (px). */
+interface CanvasStroke {
+    /** The press has held: whether there is paint in hand to brush with. */
+    fun begin(at: Offset): Boolean
+    fun move(from: Offset, to: Offset)
+    fun end()
+}
+
 @Composable
 fun PaintCanvas(
     session: PaintSession,
@@ -162,6 +176,7 @@ fun PaintCanvas(
     motion: CanvasMotion,
     placement: () -> (IntSize) -> Placement,
     onTap: (Offset) -> Unit,
+    stroke: CanvasStroke,
     darkBackdrop: Boolean,
     backdrop: Long,
     modifier: Modifier = Modifier,
@@ -180,6 +195,10 @@ fun PaintCanvas(
     val star = remember { starPath() }
     val hatchTile = remember(density) { hatchTile(density) }
     val local = remember { Matrix() }
+    val strokeHeld = remember { BooleanArray(1) }
+    // The gestures outlive a composition: they call whatever the latest one handed in.
+    val tapNow by rememberUpdatedState(onTap)
+    val strokeNow by rememberUpdatedState(stroke)
 
     val fill = remember { AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply { style = AndroidPaint.Style.FILL } }
     val sheet = remember { AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply { style = AndroidPaint.Style.FILL } }
@@ -273,24 +292,53 @@ fun PaintCanvas(
             .onSizeChanged { camera.resize(it, placement) }
             .semantics { contentDescription = "Painting canvas" }
             .pointerInput(scene) {
-                // Pinch and pan, held to the camera's limits, gliding on when let go.
+                // Pinch and pan, held to the camera's limits, gliding on when let go; or a press
+                // held still (0.28 s within 12 pt, as iOS's) that then paints as it drags.
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val tracker = VelocityTracker()
                     tracker.addPointerInputChange(down)
+                    val holdBy = down.uptimeMillis + 280
+                    val stillWithin = 12 * density
                     var zoom = 1f
                     var pan = Offset.Zero
                     var moving = false
                     var several = false
-                    do {
-                        val event = awaitPointerEvent()
+                    var strayed = false
+                    var brush: Offset? = null
+                    while (true) {
+                        val waiting = !moving && !several && !strayed && brush == null
+                        val event: PointerEvent? = if (waiting) {
+                            withTimeoutOrNull((holdBy - currentEvent.changes.first().uptimeMillis).coerceAtLeast(0)) { awaitPointerEvent() }
+                        } else awaitPointerEvent()
+                        if (event == null) {
+                            // Held: a stroke, if there is paint in hand.
+                            if (strokeNow.begin(down.position)) {
+                                brush = down.position
+                                strokeHeld[0] = true
+                                motion.brush = down.position
+                            } else strayed = true
+                            continue
+                        }
                         if (event.changes.any { it.isConsumed }) break
+                        if (event.changes.count { it.pressed } > 1) several = true
+                        val finger = event.changes.firstOrNull { it.id == down.id }
+                        if (brush != null) {
+                            if (finger == null || !finger.pressed || several) break
+                            if (finger.positionChanged()) {
+                                strokeNow.move(brush, finger.position)
+                                brush = finger.position
+                                motion.brush = brush
+                                finger.consume()
+                            }
+                            continue
+                        }
                         val zoomChange = event.calculateZoom()
                         val panChange = event.calculatePan()
-                        if (event.changes.count { it.pressed } > 1) several = true
                         if (!moving) {
                             zoom *= zoomChange
                             pan += panChange
+                            if (finger != null && (finger.position - down.position).getDistance() > stillWithin) strayed = true
                             val zoomMotion = abs(1 - zoom) * event.calculateCentroidSize(useCurrent = false)
                             if (zoomMotion > viewConfiguration.touchSlop || pan.getDistance() > viewConfiguration.touchSlop) {
                                 moving = true
@@ -303,21 +351,31 @@ fun PaintCanvas(
                             }
                             event.changes.forEach { if (it.positionChanged()) it.consume() }
                         }
-                        event.changes.firstOrNull { it.id == down.id }?.let { tracker.addPointerInputChange(it) }
-                    } while (event.changes.any { it.pressed })
-                    // A pinch doesn't fling: its last finger lifting would throw the painting.
-                    if (moving && !several) camera.fling(scope, tracker.calculateVelocity().let { Offset(it.x, it.y) })
+                        finger?.let { tracker.addPointerInputChange(it) }
+                        if (event.changes.none { it.pressed }) break
+                    }
+                    if (brush != null) {
+                        motion.brush = null
+                        strokeNow.end()
+                    } else if (moving && !several) {
+                        // A pinch doesn't fling: its last finger lifting would throw the painting.
+                        camera.fling(scope, tracker.calculateVelocity().let { Offset(it.x, it.y) })
+                    }
                 }
             }
             .pointerInput(scene) {
                 var stoppedFling = false
                 detectTapGestures(
-                    onPress = { stoppedFling = camera.stopFling() },
-                    // A tap that stops a glide only stops it; one during a flight lands it and paints.
+                    onPress = {
+                        stoppedFling = camera.stopFling()
+                        strokeHeld[0] = false
+                    },
+                    // A tap that stops a glide only stops it; one during a flight lands it and
+                    // paints; a press that became a stroke has painted already.
                     onTap = { position ->
-                        if (!stoppedFling) {
+                        if (!stoppedFling && !strokeHeld[0]) {
                             camera.land()
-                            onTap(position)
+                            tapNow(position)
                         }
                     },
                 )
@@ -550,6 +608,22 @@ fun PaintCanvas(
                 canvas.scale(side, side)
                 canvas.drawPath(if (s.star) star else sparkle, fill)
                 canvas.restore()
+            }
+
+            // A drag's brush, as large as it paints: a disc tinted with the paint in hand, a
+            // white rim, and a faint dark halo that keeps it seen on light paint.
+            motion.brush?.let { at ->
+                val pt = density
+                val r = min(CanvasLook.brushRadius * pt, CanvasLook.maxBrushRadius * scale)
+                val tint = held?.let { paints[it] } ?: CanvasLook.ink
+                fill.setColor(tint.pack(0.28f))
+                canvas.drawCircle(at.x, at.y, r, fill)
+                line.setColor(android.graphics.Color.pack(0f, 0f, 0f, 0.25f))
+                line.strokeWidth = 1.6f * pt
+                canvas.drawCircle(at.x, at.y, r + 1.4f * pt, line)
+                line.setColor(android.graphics.Color.pack(0.95f, 0.95f, 0.95f, 0.95f))
+                line.strokeWidth = 1.8f * pt
+                canvas.drawCircle(at.x, at.y, r, line)
             }
         }
     }

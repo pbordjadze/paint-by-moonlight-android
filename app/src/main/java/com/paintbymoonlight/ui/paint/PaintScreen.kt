@@ -265,12 +265,80 @@ private fun Painting(
             val fitted = abs(camera.scale / camera.fit - 1) <= 0.05f
             delay(((fillSeconds + if (fitted) 0f else 0.35f) * 1000).toLong())
             if (!session.isComplete) return@launch
-            if (fitted) {
-                motion.shine(-1, 0f)
-                return@launch
+            // Fitted, it settles there at once, to follow the Finished bar coming in.
+            val seconds = if (fitted) 0.3f else 0.8f
+            motion.shine(-1, if (still || fitted) 0f else seconds)
+            camera.settle(fitting(scene.width, scene.height, inset), seconds, still)
+        }
+    }
+
+    /**
+     * What the painter feels and hears of fills just made, a tap's one or a drag's several at
+     * once: the biggest's tap, a finished color's rising three, the painting's celebration.
+     */
+    fun painted(fills: List<Tap.Painted>) {
+        if (fills.isEmpty()) return
+        model.changed()
+        val size = fills.maxOf { min(1f, kotlin.math.sqrt(scene.regions[it.region].area / (scene.width * scene.height)) * 6) }
+        sounds.paint(size)
+        when {
+            fills.any { it.finishedPainting } -> {
+                // The painting's celebration is the one finale: its last paint has none of its own.
+                haptics.celebrate()
+                sounds.celebrate()
+                finishedHere = true
+                finishedAt = System.currentTimeMillis()
+                finish(fillSeconds = 0.9f)
             }
-            motion.shine(-1, if (still) 0f else 0.8f)
-            camera.settle(fitting(scene.width, scene.height, inset), 0.8f, still)
+            fills.any { it.finishedPaint } -> {
+                haptics.colorComplete(size)
+                sounds.colorComplete()
+            }
+            else -> haptics.paint(size)
+        }
+    }
+
+    /**
+     * Zen Mode glides on from [near] once the fill shows; after a finished color's shine, which
+     * a flight leaving at once would hide. Painting again before then keeps the page still.
+     */
+    fun glideOn(near: Offset, finishedColor: Boolean) {
+        if (!preferences.zenMode || session.isComplete) return
+        val changes = session.changes
+        scope.launch {
+            delay(if (finishedColor && !still) 1300 else 350)
+            if (session.changes == changes && !session.isComplete) showNext(near = near)
+        }
+    }
+
+    /** A drag paints the paint in hand with an 11 pt brush; everything it paints undoes together. */
+    val stroking = remember(session) { Stroking() }
+    val stroke = object : CanvasStroke {
+        override fun begin(at: Offset): Boolean {
+            if (!session.beginStroke()) return false
+            flightJob[0]?.cancel()
+            camera.land()
+            haptics.tick()
+            stroking.finishedColor = false
+            stroking.last = camera.toCanvas(at)
+            paint(stroking.last, stroking.last)
+            return true
+        }
+
+        override fun move(from: Offset, to: Offset) {
+            val b = camera.toCanvas(to)
+            paint(stroking.last, b)
+            stroking.last = b
+        }
+
+        private fun paint(a: Offset, b: Offset) {
+            val fills = session.drag(a.x, a.y, b.x, b.y, radius = CanvasLook.brushRadius * density / camera.scale)
+            if (fills.any { it.finishedPaint }) stroking.finishedColor = true
+            painted(fills)
+        }
+
+        override fun end() {
+            if (session.endStroke() > 0) glideOn(stroking.last, stroking.finishedColor)
         }
     }
 
@@ -310,6 +378,7 @@ private fun Painting(
                     backdrop = android.graphics.Color.pack(paper.toArgb()),
                     modifier = Modifier.fillMaxSize(),
                     stars = { sounds.skyOfComingFill() == Sky.Moon },
+                    stroke = stroke,
                     onTap = { screen ->
                         val p = camera.toCanvas(screen)
                         val now = SystemClock.uptimeMillis()
@@ -318,34 +387,8 @@ private fun Painting(
                         when (tap) {
                             is Tap.Painted -> {
                                 lastMiss[0] = null
-                                model.changed()
-                                val area = scene.regions[tap.region].area
-                                val size = min(1f, kotlin.math.sqrt(area / (scene.width * scene.height)) * 6)
-                                sounds.paint(size)
-                                when {
-                                    tap.finishedPainting -> {
-                                        // The painting's celebration is the one finale: its last paint has none of its own.
-                                        haptics.celebrate()
-                                        sounds.celebrate()
-                                        finishedHere = true
-                                        finishedAt = System.currentTimeMillis()
-                                        finish(fillSeconds = 0.9f)
-                                    }
-                                    tap.finishedPaint -> {
-                                        haptics.colorComplete(size)
-                                        sounds.colorComplete()
-                                    }
-                                    else -> haptics.paint(size)
-                                }
-                                if (!tap.finishedPainting && preferences.zenMode) {
-                                    // Zen Mode glides on once the fill shows; after a finished
-                                    // color's shine, which a flight leaving at once would hide.
-                                    val changes = session.changes
-                                    scope.launch {
-                                        delay(if (tap.finishedPaint && !still) 1300 else 350)
-                                        if (session.changes == changes && !session.isComplete) showNext(near = p)
-                                    }
-                                }
+                                painted(listOf(tap))
+                                if (!tap.finishedPainting) glideOn(p, tap.finishedPaint)
                             }
                             else -> {
                                 val miss = lastMiss[0]
@@ -562,4 +605,10 @@ private fun ProgressBadge(fraction: Float, complete: Boolean, celebrate: Boolean
             }
         }
     }
+}
+
+/** A stroke under way: where its brush last was (canvas units), and whether it finished a color. */
+private class Stroking {
+    var last = Offset.Zero
+    var finishedColor = false
 }
