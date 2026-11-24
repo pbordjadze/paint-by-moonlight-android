@@ -49,6 +49,8 @@ data class PaintingMeta(
     val aspect: Float = 0f,
     /** The SHA-256 (hex) of the `.moonlight` file it was received from, so opening it again opens it (SharedPaintings.kt). */
     val receivedDigest: String? = null,
+    /** The library picture or night's picture it was made from, by id; null for a photo of the painter's own or a museum's work. */
+    val sampleName: String? = null,
 )
 
 /** A painting's progress file exists but couldn't be read, or doesn't fit its template; it is left untouched. */

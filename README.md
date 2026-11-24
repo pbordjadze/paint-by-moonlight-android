@@ -20,6 +20,15 @@ native Jetpack Compose (Material 3 Expressive).
   `unlock/` Unlimited Paintings (five free paintings, one back each day; one Google Play purchase,
   the product `unlimited_paintings`, lifts the limit). Debug builds, their tests and CI buy from
   `FakeUnlockStore` (`src/debug/`), never from Play; release builds from `PlayUnlockStore`.
+  `pictures/` is what a painter paints that isn't their own photo: the iOS app's picture library
+  (`assets/samples/`, its `library.json` and JPEGs byte for byte, credits in the Paint page's
+  Picture credits) and Tonight's Picture, the library's paintings in turn by calendar day as iOS
+  counts them; `museum/` the Museum, the iOS app's open-access catalog and the museums' own
+  pictures. What iOS keeps behind `#if UNRELEASED` is on in debug builds alone (`Unreleased`, in
+  `src/debug/` and `src/release/`): the Museum and Tonight's Picture from the museums' nightly
+  schedule (`pictures/Nights.kt`), both read from paint-by-number's `museum` and `nights`
+  branches. `scripts/museum-reference.sh` prints what iOS's own Museum code makes of the test
+  catalog, which `MuseumQueryTest` compares line by line.
 - `scripts/build-core.sh` builds the core for each ABI into `app/src/main/jniLibs/`;
   `scripts/emulator-tour.sh` runs the probe and the app's tour on an emulator.
 - CI (`.github/workflows/android.yml`) builds everything, checks the emulator makes the host's

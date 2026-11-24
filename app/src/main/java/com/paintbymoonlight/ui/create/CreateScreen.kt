@@ -89,12 +89,20 @@ fun CreateScreen(model: CreateViewModel, preferences: Preferences, onBack: () ->
                     else -> {
                         Image(
                             bitmap = photo.asImageBitmap(),
-                            contentDescription = "Your photo",
+                            contentDescription = model.credit?.first ?: "Your photo",
                             contentScale = ContentScale.Fit,
                             modifier = Modifier.clip(RoundedCornerShape(28.dp)),
                         )
                         if (model.making) ContainedLoadingIndicator(Modifier.size(72.dp))
                     }
+                }
+            }
+            // A picture that isn't the painter's own keeps its maker's name in view.
+            model.credit?.let { (title, byline) ->
+                Spacer(Modifier.height(12.dp))
+                Text(title, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+                if (byline.isNotEmpty()) {
+                    Text(byline, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                 }
             }
             Spacer(Modifier.height(20.dp))

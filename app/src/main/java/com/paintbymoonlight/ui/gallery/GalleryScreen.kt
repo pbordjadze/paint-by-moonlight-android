@@ -21,7 +21,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
@@ -96,6 +99,8 @@ fun GalleryScreen(
     onPrint: ((String) -> Unit)?,
     onRename: (String, String) -> Unit,
     onDelete: (String) -> Unit,
+    /** Something new to paint, under the paintings (or the empty page's words). */
+    shelf: @Composable () -> Unit = {},
 ) {
     val paintings by library.paintings.collectAsStateWithLifecycle()
     val loaded by library.loaded.collectAsStateWithLifecycle()
@@ -128,7 +133,7 @@ fun GalleryScreen(
         },
     ) { padding ->
         if (paintings.isEmpty()) {
-            if (loaded) Empty(Modifier.padding(padding))
+            if (loaded) Empty(Modifier.padding(padding), shelf)
         } else {
             // Each painting whole at its own shape, so the columns stagger.
             LazyVerticalStaggeredGrid(
@@ -152,6 +157,7 @@ fun GalleryScreen(
                         modifier = Modifier.animateItem(),
                     )
                 }
+                item(key = "shelf", span = StaggeredGridItemSpan.FullLine) { shelf() }
             }
         }
     }
@@ -190,9 +196,9 @@ private fun countText(paintings: List<PaintingMeta>): String {
 }
 
 @Composable
-private fun Empty(modifier: Modifier) {
+private fun Empty(modifier: Modifier, shelf: @Composable () -> Unit) {
     Column(
-        modifier.fillMaxSize().padding(40.dp),
+        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 40.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -206,6 +212,7 @@ private fun Empty(modifier: Modifier) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
+        shelf()
     }
 }
 
