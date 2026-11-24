@@ -10,3 +10,4 @@ app/src/main/jniLibs/
 core/.build/
 core/.swiftpm/
 .claude/
+__pycache__/
