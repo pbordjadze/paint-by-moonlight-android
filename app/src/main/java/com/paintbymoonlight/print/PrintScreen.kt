@@ -70,6 +70,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.paintbymoonlight.ui.theme.Moonlight
@@ -180,10 +181,12 @@ private fun Pages(document: TemplatePrint) {
     val pager = rememberPagerState { document.pageCount }
     val aspect = document.pageWidth / document.pageHeight.toFloat()
     HorizontalPager(pager, Modifier.fillMaxWidth().height(340.dp), key = { "$it·${document.choices}" }) { index ->
-        val image by produceState<Bitmap?>(null, document, index) {
+        // A quick small pass first, so the page shows at once, then the full one in its place.
+        val image by produceState<Pair<Bitmap, Boolean>?>(null, document, index) {
             // Choices changed under a drawing: it stops where it is rather than finishing a stale page.
             val job = coroutineContext.job
-            value = withContext(Dispatchers.Default) { document.pageImage(index, 1100) { !job.isActive } }
+            value = withContext(Dispatchers.Default) { document.pageImage(index, QUICK_SIDE) { !job.isActive } } to false
+            value = withContext(Dispatchers.Default) { document.pageImage(index, FULL_SIDE) { !job.isActive } } to true
         }
         Box(Modifier.fillMaxSize().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
             Box(
@@ -191,10 +194,13 @@ private fun Pages(document: TemplatePrint) {
                     .aspectRatio(aspect, matchHeightConstraintsFirst = aspect < 1f)
                     .shadow(8.dp, RoundedCornerShape(1.dp))
                     .background(Moonlight.sheet)
-                    .semantics { contentDescription = caption(document, index) },
+                    .semantics {
+                        contentDescription = caption(document, index)
+                        if (image?.second != true) stateDescription = "Loading"
+                    },
                 contentAlignment = Alignment.Center,
             ) {
-                val picture = image
+                val picture = image?.first
                 if (picture != null) {
                     val bitmap = remember(picture) { picture.asImageBitmap() }
                     Image(bitmap, contentDescription = null, contentScale = ContentScale.FillBounds, modifier = Modifier.fillMaxSize())
@@ -212,6 +218,10 @@ private fun Pages(document: TemplatePrint) {
         modifier = Modifier.fillMaxWidth(),
     )
 }
+
+/** The preview's quick first pass and its full drawing, in px on the page's long side. */
+private const val QUICK_SIDE = 360
+private const val FULL_SIDE = 1100
 
 /** Which page, and what it is: the sheets laid together, or its place among the pages. */
 private fun caption(document: TemplatePrint, index: Int): String =
