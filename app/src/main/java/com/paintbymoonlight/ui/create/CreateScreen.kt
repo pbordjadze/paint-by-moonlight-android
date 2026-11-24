@@ -49,6 +49,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.paintbymoonlight.core.PaintingLength
 import com.paintbymoonlight.data.Preferences
+import com.paintbymoonlight.unlock.FreePaintingsLeft
+import com.paintbymoonlight.unlock.rememberUnlockGate
 
 /**
  * The picked photo, Painting Length (Quick, Relaxed, Detailed: a connected button group) and
@@ -59,6 +61,9 @@ import com.paintbymoonlight.data.Preferences
 @Composable
 fun CreateScreen(model: CreateViewModel, preferences: Preferences, onBack: () -> Unit, onMade: (String) -> Unit) {
     LaunchedEffect(model.made) { model.made?.let(onMade) }
+    // Asked again at Start: the free painting the gallery saw may have gone since (another day, another painting).
+    val gate = rememberUnlockGate(model.paintings)
+    gate.Sheet()
     Scaffold(
         topBar = {
             TopAppBar(
@@ -113,7 +118,7 @@ fun CreateScreen(model: CreateViewModel, preferences: Preferences, onBack: () ->
                         LengthChoice(preferences.paintingLength) { preferences.paintingLength = it }
                         Spacer(Modifier.height(18.dp))
                         Button(
-                            onClick = { model.make(preferences.paintingLength) },
+                            onClick = { gate.start { model.make(preferences.paintingLength) } },
                             enabled = model.photo != null,
                             modifier = Modifier.fillMaxWidth().height(56.dp),
                         ) {
@@ -121,6 +126,8 @@ fun CreateScreen(model: CreateViewModel, preferences: Preferences, onBack: () ->
                             Spacer(Modifier.width(ButtonDefaults.IconSpacing))
                             Text("Start painting", style = MaterialTheme.typography.titleMedium)
                         }
+                        Spacer(Modifier.height(8.dp))
+                        FreePaintingsLeft(model.paintings)
                         Spacer(Modifier.height(12.dp))
                     }
                 }

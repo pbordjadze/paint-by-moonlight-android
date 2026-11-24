@@ -31,6 +31,7 @@ import com.paintbymoonlight.ui.gallery.GalleryScreen
 import com.paintbymoonlight.ui.paint.PaintScreen
 import com.paintbymoonlight.ui.paint.PaintViewModel
 import com.paintbymoonlight.ui.theme.MoonlightTheme
+import com.paintbymoonlight.unlock.rememberUnlockGate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -70,13 +71,15 @@ private fun MoonlightNav(app: MoonlightApp) {
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) nav.navigate(Routes.create(uri))
     }
+    // A new painting takes a free painting: with none left, the gate offers Unlimited Paintings first.
+    val gate = rememberUnlockGate(app.paintings)
     val share: (String) -> Unit = { id -> scope.launch { sharePainting(context, library, id) } }
 
     NavHost(navController = nav, startDestination = Routes.GALLERY) {
         composable(Routes.GALLERY) {
             GalleryScreen(
                 library = library,
-                onNew = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onNew = { gate.start { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) } },
                 onOpen = { nav.navigate(Routes.paint(it)) },
                 onShare = share,
                 onPrint = { id -> nav.navigate(Routes.print(id)) },
@@ -86,7 +89,7 @@ private fun MoonlightNav(app: MoonlightApp) {
         }
         composable(Routes.CREATE) { entry ->
             val photo = Uri.parse(entry.arguments?.getString("photo") ?: "")
-            val model = viewModel { CreateViewModel(library, app.contentResolver, photo) }
+            val model = viewModel { CreateViewModel(library, app.contentResolver, photo, app.paintings) }
             CreateScreen(
                 model = model,
                 preferences = app.preferences,
@@ -119,6 +122,7 @@ private fun MoonlightNav(app: MoonlightApp) {
             BigSheetScreen(model = model, onBack = { nav.popBackStack() })
         }
     }
+    gate.Sheet()
 }
 
 /** Shares the painting as a PNG: finished, every area in its paint; in progress, as it stands. */
