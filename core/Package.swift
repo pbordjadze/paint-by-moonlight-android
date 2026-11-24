@@ -25,7 +25,12 @@ let package = Package(
             swiftSettings: [.unsafeFlags(["-O"], .when(configuration: .debug))]
         ),
         // JNI entry points, in C: they copy Java arrays in and out and call MoonlightCore's C ABI.
-        .target(name: "CMoonlightJNI"),
+        // They're all the library exports (exports.map), which lets the linker drop what they never reach.
+        .target(
+            name: "CMoonlightJNI",
+            exclude: ["exports.map"],
+            linkerSettings: [.unsafeFlags(["-Xlinker", "--version-script=\(Context.packageDirectory)/Sources/CMoonlightJNI/exports.map"])]
+        ),
         // A libc++ function the Android runtime needs and the NDK lacks (hash_memory.c).
         .target(name: "CxxHashMemory"),
         // Runs the same generation as the app on a photo from the command line, on a device or an
