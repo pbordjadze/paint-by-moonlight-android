@@ -3,6 +3,7 @@ package com.paintbymoonlight.print
 import android.graphics.Bitmap
 import android.icu.util.LocaleData
 import android.icu.util.ULocale
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
@@ -102,23 +103,23 @@ fun BigSheetScreen(model: BigSheetViewModel, onBack: () -> Unit) {
     val client = remember(config) { config?.let { GooglePay.client(context, it) } }
     var googlePayReady by remember(client) { mutableStateOf(false) }
     LaunchedEffect(client) { googlePayReady = client != null && GooglePay.isReady(client) }
-    var agreed by remember { mutableStateOf<BigSheetQuote?>(null) }
     val payLauncher = rememberLauncherForActivityResult(TaskResultContracts.GetPaymentDataResult()) { result ->
-        val quote = agreed
         val data = result.result
         when {
-            result.status.statusCode == CommonStatusCodes.SUCCESS && data != null && quote != null -> model.paid(data, quote)
+            result.status.statusCode == CommonStatusCodes.SUCCESS && data != null -> model.paid(data)
             result.status.statusCode == CommonStatusCodes.CANCELED -> model.paymentCancelled()
             else -> model.paymentFailed()
         }
     }
 
+    // While an order is under way the screen stays: its answer is what the painter waits for.
+    BackHandler(enabled = model.placing) {}
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("One Big Sheet") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back") }
+                    IconButton(onClick = onBack, enabled = !model.placing) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
             )
@@ -128,11 +129,10 @@ fun BigSheetScreen(model: BigSheetViewModel, onBack: () -> Unit) {
             if (placed == null && !model.loadFailed) {
                 OrderBar(
                     model = model,
-                    googlePay = if (googlePayReady && config != null) config else null,
+                    googlePayReady = googlePayReady,
                     onGooglePay = { quote, payConfig ->
                         val payments = client ?: return@OrderBar
-                        agreed = quote
-                        model.willPay()
+                        model.willPay(quote)
                         val request = GooglePay.request(payConfig, quote, "One Big Sheet", model.country)
                         payLauncher.launch(payments.loadPaymentData(request))
                     },
@@ -161,6 +161,8 @@ fun BigSheetScreen(model: BigSheetViewModel, onBack: () -> Unit) {
                         BigSheetViewModel.OrderFailure.Pending -> "This order may already be on its way. Check your email before ordering again."
                         BigSheetViewModel.OrderFailure.PriceMoved -> "The price changed. Nothing was charged: check the new price and order again."
                         BigSheetViewModel.OrderFailure.PaymentDeclined -> "The payment didn’t go through. Nothing was charged."
+                        BigSheetViewModel.OrderFailure.Refunded -> "The printer couldn’t take this order; your payment was refunded."
+                        BigSheetViewModel.OrderFailure.Address -> "Google Pay didn’t share a full address with a postal code."
                         BigSheetViewModel.OrderFailure.GooglePay -> "Google Pay couldn’t take the payment. Nothing was charged."
                         BigSheetViewModel.OrderFailure.Other -> "Check your connection and try again."
                     },
@@ -363,15 +365,20 @@ private fun Paper(picture: Bitmap?, width: Dp, height: Dp) {
     }
 }
 
-/** Google Pay where the relay takes it and the device can; a test order while the relay is the sandbox. */
+/**
+ * Google Pay where the relay takes it (its quote says how) and the device can; a test order,
+ * unpaid, while the relay doesn't take it.
+ */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun OrderBar(
     model: BigSheetViewModel,
-    googlePay: GooglePayConfig?,
+    googlePayReady: Boolean,
     onGooglePay: (BigSheetQuote, GooglePayConfig) -> Unit,
 ) {
     val quote = model.currentQuote
+    val offered = quote?.googlePay
+    val googlePay = offered?.takeIf { googlePayReady }
     val ready = quote != null && !model.placing && model.scene != null
     Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 2.dp) {
         Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
@@ -381,7 +388,7 @@ private fun OrderBar(
                     LoadingIndicator(Modifier.size(40.dp))
                 }
                 googlePay != null -> PayButton(
-                    onClick = { if (quote != null) onGooglePay(quote, googlePay) },
+                    onClick = { onGooglePay(quote, googlePay) },
                     allowedPaymentMethods = GooglePay.allowedPaymentMethods(googlePay),
                     theme = if (isSystemInDarkTheme()) ButtonTheme.Light else ButtonTheme.Dark,
                     type = ButtonType.Order,
@@ -389,7 +396,7 @@ private fun OrderBar(
                     enabled = ready,
                     modifier = Modifier.fillMaxWidth().height(56.dp),
                 )
-                quote?.sandbox != null || quote == null -> Button(
+                offered == null -> Button(
                     onClick = model::placeTestOrder,
                     enabled = ready,
                     modifier = Modifier.fillMaxWidth().height(56.dp),
