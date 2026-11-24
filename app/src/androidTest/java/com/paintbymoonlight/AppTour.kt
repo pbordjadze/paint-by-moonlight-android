@@ -130,8 +130,15 @@ class AppTour {
         save(name, instrumentation.uiAutomation.takeScreenshot() ?: compose.onRoot().captureToImage().asAndroidBitmap())
     }
 
-    /** The app's window now, without waiting for its animations to end (the clock is paused). */
-    private fun capture(name: String) = save(name, compose.onRoot().captureToImage().asAndroidBitmap())
+    /**
+     * The screen now, status bar included, without waiting for the app's animations to end (the
+     * clock may be paused, or an animation never ends); the root's own image where the device
+     * can't take one.
+     */
+    private fun capture(name: String) {
+        Thread.sleep(300)
+        save(name, instrumentation.uiAutomation.takeScreenshot() ?: compose.onRoot().captureToImage().asAndroidBitmap())
+    }
 
     private fun save(name: String, bitmap: Bitmap) {
         File(shots, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
@@ -163,6 +170,8 @@ class AppTour {
     @Test
     fun a_emptyGallery() {
         waitFor(hasText("Your photos, painted by numbers"), 10_000)
+        // The shelf shows once its pictures are read.
+        waitFor(hasText("Tonight’s Picture") or hasText("Earlier Nights"), 10_000)
         shoot("01-empty-gallery")
     }
 
