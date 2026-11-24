@@ -12,7 +12,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.IntentCompat
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.paintbymoonlight.data.Library
@@ -20,8 +22,12 @@ import com.paintbymoonlight.data.ReceiveException
 import com.paintbymoonlight.data.SharedPaintings
 import kotlinx.coroutines.launch
 
-/** The file an intent opens the app with, if it brings one (a `.moonlight` file someone sent, viewed or shared to the app). */
-fun openedFile(intent: Intent?): Uri? = when (intent?.action) {
+/**
+ * The file an intent opens the app with, if it brings one (a `.moonlight` file someone sent,
+ * viewed or shared to the app); none when the app is reopened from Recents, which delivers the
+ * intent that first opened it again.
+ */
+fun openedFile(intent: Intent?): Uri? = if (intent == null || intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) null else when (intent.action) {
     Intent.ACTION_VIEW -> intent.data
     Intent.ACTION_SEND -> IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
     else -> null
@@ -29,13 +35,15 @@ fun openedFile(intent: Intent?): Uri? = when (intent?.action) {
 
 /**
  * Adds the painting in [file] (a `.moonlight` file someone sent) to the library, then [onAdded]
- * opens it; when it can't be added, a calm alert says why, in the iOS app's words. Survives a
- * configuration change without adding it twice.
+ * opens it; when it can't be added, a calm alert says why, in the iOS app's words. Its model
+ * outlives a configuration change (a receive under way finishes and is opened) and remembers in
+ * its saved state that the file was handled, so an activity restored after the process was
+ * killed doesn't add or open it again.
  */
 @Composable
 fun ReceivePainting(file: Uri?, library: Library, resolver: ContentResolver, onAdded: (String) -> Unit) {
     if (file == null) return
-    val model = viewModel { ReceiveViewModel(library, resolver, file) }
+    val model = viewModel { ReceiveViewModel(createSavedStateHandle(), library, resolver, file) }
     LaunchedEffect(model.added) {
         model.added?.let { id ->
             model.added = null
@@ -52,18 +60,25 @@ fun ReceivePainting(file: Uri?, library: Library, resolver: ContentResolver, onA
     }
 }
 
-private class ReceiveViewModel(library: Library, resolver: ContentResolver, file: Uri) : ViewModel() {
+private class ReceiveViewModel(state: SavedStateHandle, library: Library, resolver: ContentResolver, file: Uri) : ViewModel() {
     /** The painting added, until it has been opened. */
     var added by mutableStateOf<String?>(null)
     var failure by mutableStateOf<String?>(null)
 
     init {
-        viewModelScope.launch {
-            try {
-                added = SharedPaintings.receive(library, resolver, file)
-            } catch (e: ReceiveException) {
-                failure = e.message
+        if (state.get<Boolean>(HANDLED) != true) {
+            viewModelScope.launch {
+                try {
+                    added = SharedPaintings.receive(library, resolver, file)
+                } catch (e: ReceiveException) {
+                    failure = e.message
+                }
+                state[HANDLED] = true
             }
         }
+    }
+
+    private companion object {
+        const val HANDLED = "handled"
     }
 }

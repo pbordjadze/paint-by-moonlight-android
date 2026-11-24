@@ -57,11 +57,9 @@ object SharedPaintings {
         val bytes = withContext(Dispatchers.IO) {
             try {
                 read(resolver, uri)
-            } catch (e: IOException) {
+            } catch (e: Exception) {
+                // Whatever the sending app's provider throws (it may be anyone's): not a file to open.
                 Log.e(TAG, "couldn't read the file", e)
-                null
-            } catch (e: SecurityException) {
-                Log.e(TAG, "not allowed to read the file", e)
                 null
             }
         } ?: throw ReceiveException(ReceiveException.Reason.Damaged)
@@ -76,6 +74,9 @@ object SharedPaintings {
         } catch (e: CoreException) {
             Log.e(TAG, "a received painting couldn't be read: status ${e.status}")
             throw ReceiveException(if (e.status == 4) ReceiveException.Reason.NeedsNewerApp else ReceiveException.Reason.Damaged)
+        } catch (e: OutOfMemoryError) {
+            Log.e(TAG, "a received painting is too large to read", e)
+            throw ReceiveException(ReceiveException.Reason.Damaged)
         }
         val photo = shared.photo?.let { decodePhoto(it) }
         if (shared.photo != null && photo == null) Log.e(TAG, "a received painting's photo couldn't be decoded")
@@ -86,6 +87,9 @@ object SharedPaintings {
         val scene = try {
             Core.scene(shared.template, seed, version)
         } catch (e: CoreException) {
+            throw ReceiveException(ReceiveException.Reason.Damaged)
+        } catch (e: OutOfMemoryError) {
+            Log.e(TAG, "a received painting is too large to draw", e)
             throw ReceiveException(ReceiveException.Reason.Damaged)
         }
         try {
@@ -134,7 +138,27 @@ object SharedPaintings {
 
     private fun photoFile(library: Library, id: String) = File(library.folder(id), Library.PHOTO)
 
-    private fun fileName(title: String) = title.replace(Regex("[^\\p{L}\\p{N} ._-]"), "").trim().ifBlank { "Painting" }
+    /**
+     * The title as a file's name: letters, digits and a little punctuation, at most
+     * [MAX_NAME_BYTES] of UTF-8 so " Template.moonlight" still fits in a file system's 255 bytes.
+     */
+    private fun fileName(title: String): String {
+        val cleaned = title.replace(Regex("[^\\p{L}\\p{N} ._-]"), "").trim()
+        val name = StringBuilder()
+        var bytes = 0
+        var i = 0
+        while (i < cleaned.length) {
+            val codePoint = cleaned.codePointAt(i)
+            val size = String(Character.toChars(codePoint)).encodeToByteArray().size
+            if (bytes + size > MAX_NAME_BYTES) break
+            name.appendCodePoint(codePoint)
+            bytes += size
+            i += Character.charCount(codePoint)
+        }
+        return name.toString().trim().ifBlank { "Painting" }
+    }
+
+    private const val MAX_NAME_BYTES = 120
 
     private fun read(resolver: ContentResolver, uri: Uri): ByteArray? {
         val input = resolver.openInputStream(uri) ?: return null

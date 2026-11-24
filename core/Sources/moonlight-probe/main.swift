@@ -50,7 +50,7 @@ print("""
     """)
 if let outPath { _ = FileManager.default.createFile(atPath: outPath, contents: Data(bytes)) }
 
-func fnv1a(_ bytes: [UInt8]) -> String {
+func fnv1a(_ bytes: some Sequence<UInt8>) -> String {
     var hash: UInt64 = 0xcbf2_9ce4_8422_2325
     for b in bytes { hash = (hash ^ UInt64(b)) &* 0x100_0000_01b3 }
     return String(hash, radix: 16)
@@ -65,7 +65,7 @@ func sharedProbe(_ paths: [String]) -> Int32 {
             continue
         }
         do {
-            let received = try Exchange.read([UInt8](data))
+            let received = try Exchange.read(data)
             let shared = received.shared
             let names = shared.nicknames.map { "seed \($0.seed) version \($0.version)" } ?? "none"
             print("""
@@ -76,16 +76,17 @@ func sharedProbe(_ paths: [String]) -> Int32 {
                 \(shared.template.palette.count) paints, \(received.template.count) bytes, hash \(fnv1a(received.template))
                   valid \(shared.template.validate().isValid)
                 """)
-            let settings = try shared.settings.map { [UInt8](try JSONEncoder().encode($0)) }
+            let settings = try shared.settings.map { try JSONEncoder().encode($0) }
             let sent = try Exchange.write(
-                template: received.template, title: shared.title, settingsJSON: settings, photo: shared.photo.map { [UInt8]($0) },
+                template: received.template, title: shared.title, settingsJSON: settings, photo: shared.photo,
                 nicknames: shared.nicknames)
             let back = try Exchange.read(sent)
+            let sentBytes = [UInt8](sent)
             let whole = back.template == received.template && back.shared.title == shared.title
                 && back.shared.settings == shared.settings && back.shared.photo == shared.photo && back.shared.nicknames == shared.nicknames
-            print("  sent again: \(sent.count) bytes, \(templateCompressed(sent) ? "lzfse" : "uncompressed"), \(whole ? "read back whole" : "CHANGED")")
+            print("  sent again: \(sent.count) bytes, \(templateCompressed(sentBytes) ? "lzfse" : "uncompressed"), \(whole ? "read back whole" : "CHANGED")")
             if !whole { failed = true }
-            let damaged = damagedCopiesRead(sent)
+            let damaged = damagedCopiesRead(sentBytes)
             print("  \(damaged.read) damaged copies read, \(damaged.refused) refused, none crashed")
         } catch {
             print("\(path): \(error)")
@@ -113,7 +114,7 @@ func templateCompressed(_ file: [UInt8]) -> Bool {
 func damagedCopiesRead(_ file: [UInt8]) -> (read: Int, refused: Int) {
     var read = 0, refused = 0
     for length in stride(from: 0, to: file.count, by: max(1, file.count / 400)) {
-        precondition((try? Exchange.read(Array(file[..<length]))) == nil, "a file cut at \(length) opened")
+        precondition((try? Exchange.read(Data(file[..<length]))) == nil, "a file cut at \(length) opened")
         read += 1
         refused += 1
     }
@@ -122,7 +123,7 @@ func damagedCopiesRead(_ file: [UInt8]) -> (read: Int, refused: Int) {
         state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
         var copy = file
         copy[Int((state >> 33) % UInt64(file.count))] ^= UInt8(truncatingIfNeeded: state >> 13) | 1
-        if (try? Exchange.read(copy)) == nil { refused += 1 }
+        if (try? Exchange.read(Data(copy))) == nil { refused += 1 }
         read += 1
     }
     return (read, refused)

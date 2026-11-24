@@ -9,11 +9,13 @@ import PaintCore
 // mc_free; a job is retained until mc_job_free. Statuses: 0 ok, 1 cancelled, 2 failed, 3 bad input,
 // 4 a file from a newer app.
 
-private func handOut(_ bytes: [UInt8], _ out: UnsafeMutablePointer<UnsafeMutablePointer<UInt8>?>, _ count: UnsafeMutablePointer<Int64>) {
-    let buffer = malloc(max(bytes.count, 1))!.assumingMemoryBound(to: UInt8.self)
-    bytes.withUnsafeBufferPointer { buffer.update(from: $0.baseAddress!, count: bytes.count) }
-    out.pointee = buffer
-    count.pointee = Int64(bytes.count)
+private func handOut(_ bytes: some ContiguousBytes, _ out: UnsafeMutablePointer<UnsafeMutablePointer<UInt8>?>, _ count: UnsafeMutablePointer<Int64>) {
+    bytes.withUnsafeBytes { source in
+        let buffer = malloc(max(source.count, 1))!
+        if let base = source.baseAddress { buffer.copyMemory(from: base, byteCount: source.count) }
+        out.pointee = buffer.assumingMemoryBound(to: UInt8.self)
+        count.pointee = Int64(source.count)
+    }
 }
 
 @_cdecl("mc_free")
@@ -54,7 +56,7 @@ public func mc_make(
     do {
         let made = try Engine.make(image, length: lengths[Int(length)], job: handle)
         handOut([UInt8](made.template.encoded()), template, templateCount)
-        handOut([UInt8](try JSONEncoder().encode(made.settings)), settings, settingsCount)
+        handOut(try JSONEncoder().encode(made.settings), settings, settingsCount)
         return 0
     } catch {
         return handle?.isCancelled == true ? 1 : 2
@@ -101,17 +103,19 @@ public func mc_shared_read(
 ) -> Int32 {
     guard let bytes, count > 0 else { return 3 }
     do {
-        let received = try Exchange.read(Array(UnsafeBufferPointer(start: bytes, count: Int(count))))
+        // Borrowed, not copied: the JNI glue holds the file's bytes until this returns.
+        let file = Data(bytesNoCopy: UnsafeMutableRawPointer(mutating: bytes), count: Int(count), deallocator: .none)
+        let received = try Exchange.read(file)
         let settings = try JSONEncoder().encode(received.settings)
         let names = received.shared.nicknames
         let about = ReceivedInfo(
             title: received.shared.title, settings: String(decoding: settings, as: UTF8.self),
             nicknameSeed: names.map { Int64(bitPattern: $0.seed) }, nicknameVersion: names?.version)
-        let aboutJSON = [UInt8](try JSONEncoder().encode(about))
+        let aboutJSON = try JSONEncoder().encode(about)
         handOut(received.template, template, templateCount)
         handOut(aboutJSON, info, infoCount)
         if let picture = received.shared.photo {
-            handOut([UInt8](picture), photo, photoCount)
+            handOut(picture, photo, photoCount)
         } else {
             photo.pointee = nil
             photoCount.pointee = 0
@@ -136,14 +140,15 @@ public func mc_shared_write(
     _ nicknameSeed: UInt64, _ nicknameVersion: Int32,
     _ out: UnsafeMutablePointer<UnsafeMutablePointer<UInt8>?>, _ outCount: UnsafeMutablePointer<Int64>
 ) -> Int32 {
-    func bytes(_ p: UnsafePointer<UInt8>?, _ n: Int64) -> [UInt8]? {
+    // Borrowed, not copied, as in mc_shared_read.
+    func bytes(_ p: UnsafePointer<UInt8>?, _ n: Int64) -> Data? {
         guard let p, n > 0 else { return nil }
-        return Array(UnsafeBufferPointer(start: p, count: Int(n)))
+        return Data(bytesNoCopy: UnsafeMutableRawPointer(mutating: p), count: Int(n), deallocator: .none)
     }
     guard let templateBytes = bytes(template, templateCount) else { return 3 }
     do {
         let file = try Exchange.write(
-            template: templateBytes, title: String(decoding: bytes(title, titleCount) ?? [], as: UTF8.self),
+            template: templateBytes, title: String(decoding: bytes(title, titleCount) ?? Data(), as: UTF8.self),
             settingsJSON: bytes(settings, settingsCount), photo: bytes(photo, photoCount),
             nicknames: SharedPainting.Nicknames(seed: nicknameSeed, version: Int(nicknameVersion)))
         handOut(file, out, outCount)

@@ -44,8 +44,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         val app = application as MoonlightApp
-        // A painting someone sent, opened once: not again when the activity is restored.
-        val opened = if (savedInstanceState == null) openedFile(intent) else null
+        // A painting someone sent (ReceivePainting adds it once, across recreation). The activity
+        // is launched standard, so each file opened starts it anew: no onNewIntent to handle.
+        val opened = openedFile(intent)
         setContent {
             MoonlightTheme {
                 MoonlightNav(app, opened)
